@@ -1,0 +1,191 @@
+// База сайта (решения.md, 4.1). Пользователи Amazon сюда не загружаются — только пользователи сайта.
+// book_embeddings и review_summaries появятся, когда будет выбрана модель эмбеддингов.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                  Int       @id @default(autoincrement())
+  email               String    @unique
+  passwordHash        String    @map("password_hash")
+  name                String
+  onboardingCompleted Boolean   @default(false) @map("onboarding_completed")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  ratings     Rating[]
+  shelves     Shelf[]
+  hidden      HiddenBook[]
+  topics      UserTopic[]
+  events      Event[]
+  goals       ReadingGoal[]
+
+  @@map("users")
+}
+
+// Каталог из data/processed/books_clean.parquet (скрипт scripts/load-books.js)
+model Book {
+  id                 String   @id @db.VarChar(16) // parent_asin
+  title              String
+  author             String?
+  year               Int?     @db.SmallInt
+  // Раздел онбординга (onboarding_section); у служебных разделов — пусто, тогда показываем category
+  section            String?
+  category           String?  // cat2 — раздел верхнего уровня как в Amazon
+  subsection         String?  // cat3
+  format             String?
+  language           String?
+  isbn13             String?  @db.VarChar(13)
+  cover              String?
+  annotation         String   @default("")
+  rating             Float?   @db.Real     // средняя оценка Amazon (average_rating)
+  ratingsCount       Int      @default(0) @map("ratings_count")        // оценок в 5-core (n_ratings)
+  amazonRatingsCount Int      @default(0) @map("amazon_ratings_count") // rating_number
+  editionsCount      Int      @default(1) @map("editions_count") @db.SmallInt
+  // Байесовское среднее (3.3) — считается при загрузке, нужно для сортировки «по рейтингу»
+  weightedRating     Float    @default(0) @map("weighted_rating") @db.Real
+  // Полнотекстовый поиск: генерируемая колонка (GENERATED ALWAYS AS … STORED, задана в миграции);
+  // dbgenerated повторяет её выражение, чтобы Prisma не видела расхождения со схемой
+  searchVector       Unsupported("tsvector")? @default(dbgenerated("(setweight(to_tsvector('english'::regconfig, title), 'A'::\"char\") || setweight(to_tsvector('simple'::regconfig, COALESCE(author, ''::text)), 'B'::\"char\"))")) @map("search_vector")
+
+  ratings  Rating[]
+  shelves  Shelf[]
+  hidden   HiddenBook[]
+  events   Event[]
+
+  @@index([section, ratingsCount(sort: Desc)])
+  @@index([section, weightedRating(sort: Desc)])
+  @@index([subsection, weightedRating(sort: Desc)])
+  @@index([ratingsCount(sort: Desc)])
+  @@index([weightedRating(sort: Desc)])
+  @@index([isbn13])
+  @@index([searchVector], type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "books_title_trgm_idx")
+  @@index([author(ops: raw("gin_trgm_ops"))], type: Gin, map: "books_author_trgm_idx")
+  @@map("books")
+}
+
+// Только оценки пользователей сайта, шкала 1–5 (2.2)
+model Rating {
+  userId    Int      @map("user_id")
+  bookId    String   @map("book_id") @db.VarChar(16)
+  value     Int      @db.SmallInt
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@id([userId, bookId])
+  @@index([userId, updatedAt(sort: Desc)])
+  @@index([bookId])
+  @@map("ratings")
+}
+
+enum ShelfKind {
+  want    // «Хочу прочитать»
+  reading // «Читаю»
+  read    // «Прочитал»
+
+  @@map("shelf_kind")
+}
+
+// Книга стоит не больше чем на одной полке; updated_at — когда попала на текущую полку
+model Shelf {
+  userId    Int       @map("user_id")
+  bookId    String    @map("book_id") @db.VarChar(16)
+  shelf     ShelfKind
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@id([userId, bookId])
+  @@index([userId, shelf, updatedAt(sort: Desc)])
+  @@index([bookId])
+  @@map("shelves")
+}
+
+// «Не интересно» (2.6)
+model HiddenBook {
+  userId    Int      @map("user_id")
+  bookId    String   @map("book_id") @db.VarChar(16)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@id([userId, bookId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([bookId])
+  @@map("hidden_books")
+}
+
+enum TopicKind {
+  section    // раздел онбординга
+  subsection // подраздел (cat3); позже — кластер подтем (2.3)
+  author
+
+  @@map("topic_kind")
+}
+
+enum TopicSource {
+  onboarding // выбрано пользователем при онбординге
+  profile    // выведено системой (профиль вкусов)
+
+  @@map("topic_source")
+}
+
+// Темы из онбординга и профиля вкусов; rejected — «Это не про меня» (2.2)
+model UserTopic {
+  id        Int         @id @default(autoincrement())
+  userId    Int         @map("user_id")
+  kind      TopicKind
+  value     String
+  source    TopicSource
+  rejected  Boolean     @default(false)
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, value])
+  @@map("user_topics")
+}
+
+// Неявные сигналы: просмотр карточки, клик по рекомендации, поиск, ответы онбординга
+model Event {
+  id        BigInt   @id @default(autoincrement())
+  userId    Int?     @map("user_id")
+  type      String   @db.VarChar(32)
+  bookId    String?  @map("book_id") @db.VarChar(16)
+  query     String?
+  payload   Json?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book Book? @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, createdAt(sort: Desc)])
+  @@index([type, createdAt(sort: Desc)])
+  @@index([bookId])
+  @@map("events")
+}
+
+model ReadingGoal {
+  userId    Int      @map("user_id")
+  year      Int      @db.SmallInt
+  target    Int
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, year])
+  @@map("reading_goals")
+}
