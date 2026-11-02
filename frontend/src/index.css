@@ -1,0 +1,96 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* Дизайн-токены (решения.md, 5.1). Цвета меняются вместе с темой, Tailwind берёт их через @theme inline. */
+:root {
+  color-scheme: light;
+  --paper: #f7f5f0;
+  --surface: #fdfcf9;
+  --surface-2: #efece4;
+  --ink: #1c1b19;
+  --muted: #6b675f;
+  --line: #e3dfd6;
+
+  --accent: #2e5e4e;
+  --accent-hover: #244b3e;
+  --accent-fg: #f7f5f0;
+  --accent-text: #2e5e4e;
+  --accent-soft: #e2ebe6;
+
+  --smart: #b7791f;
+  --smart-text: #8a5a12;
+  --smart-soft: #f6ecda;
+
+  --star: #b7791f;
+  --cover-shadow: 0 1px 2px rgb(28 27 25 / 0.12), 0 4px 12px rgb(28 27 25 / 0.08);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --paper: #141413;
+  --surface: #1b1b19;
+  --surface-2: #252522;
+  --ink: #edeae4;
+  --muted: #a29e95;
+  --line: #2d2c29;
+
+  --accent: #3d7863;
+  --accent-hover: #478a72;
+  --accent-fg: #f7f5f0;
+  --accent-text: #8cc4ad;
+  --accent-soft: #1d2b26;
+
+  --smart: #d69a3f;
+  --smart-text: #e8b565;
+  --smart-soft: #2a2217;
+
+  --star: #d69a3f;
+  --cover-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.35);
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+  --color-smart: var(--smart);
+  --color-smart-text: var(--smart-text);
+  --color-smart-soft: var(--smart-soft);
+  --color-star: var(--star);
+  --shadow-cover: var(--cover-shadow);
+}
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-serif: 'Literata', ui-serif, Georgia, serif;
+  --radius-cover: 4px;
+}
+
+@layer base {
+  body {
+    @apply bg-paper font-sans text-ink antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply font-serif;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
