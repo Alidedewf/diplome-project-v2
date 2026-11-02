@@ -1,0 +1,35 @@
+[project]
+name = "book-recsys-ml"
+version = "0.1.0"
+description = "ML-часть дипломного проекта: рекомендательная система книг"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "catboost>=1.2.10",
+    "huggingface-hub>=2.4.0",
+    "implicit>=0.7.3",
+    "ipykernel>=7.4.0",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.11.2",
+    "numpy>=1.26,<2",
+    "optuna>=5.0.0",
+    "pandas>=2.2,<3",
+    "pyarrow>=18,<22",
+    "rectools[torch]>=0.19.0",
+    "scikit-learn>=1.9.1",
+    "seaborn>=0.13.2",
+    "sentence-transformers>=6.2.0",
+    "torch>=2.11.0",
+    "tqdm>=4.70.1",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'win32'", "sys_platform == 'linux'"]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
