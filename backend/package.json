@@ -9,6 +9,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate",
     "load:books": "node scripts/load-books.js",
+    "load:embeddings": "node scripts/load-embeddings.js",
     "test": "vitest run"
   },
   "dependencies": {

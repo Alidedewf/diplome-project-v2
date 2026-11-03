@@ -5,6 +5,8 @@ services:
     image: pgvector/pgvector:pg17
     container_name: bookmind-db
     restart: unless-stopped
+    # Разделяемая память для параллельной сборки HNSW-индексов pgvector (в Docker по умолчанию 64 МБ)
+    shm_size: 1gb
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

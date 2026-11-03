@@ -16,12 +16,12 @@ export async function setup() {
 
   const db = new pg.Client({ connectionString: process.env.DATABASE_URL })
   await db.connect()
-  await db.query('TRUNCATE users, books RESTART IDENTITY CASCADE')
+  await db.query('TRUNCATE users, books, embedding_models RESTART IDENTITY CASCADE')
   for (const b of BOOKS) {
     await db.query(
       `INSERT INTO books (id, title, author, year, section, category, subsection, cover, annotation, rating, ratings_count, weighted_rating)
-       VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9, $10, $11)`,
-      [b.id, b.title, b.author, b.year, b.section, b.subsection, `https://example.com/${b.id}.jpg`, `About ${b.title}`, b.rating, b.ratingsCount, b.weightedRating],
+       VALUES ($1, $2, $3, $4, $5, $12, $6, $7, $8, $9, $10, $11)`,
+      [b.id, b.title, b.author, b.year, b.section, b.subsection, `https://example.com/${b.id}.jpg`, `About ${b.title}`, b.rating, b.ratingsCount, b.weightedRating, b.category ?? b.section],
     )
   }
   await db.end()

@@ -32,4 +32,10 @@ const CATALOG = Object.entries(SECTIONS).flatMap(([section, subsections], si) =>
   ),
 )
 
-export const BOOKS = [...CATALOG, ...AUTHOR_BOOKS]
+// Без раздела онбординга: служебная категория Amazon и категория, совпадающая с разделом словаря (статистика, «Другое»)
+export const UNSECTIONED_BOOKS = [
+  { id: 'U000000001', title: 'Winter Box Set', author: 'Boxed Author', category: 'Boxed Sets' },
+  { id: 'U000000002', title: 'Lost Romance', author: 'Romance Author', category: 'Romance' },
+].map((b) => ({ ...b, section: null, subsection: null, year: 2018, rating: 4, ratingsCount: 5, weightedRating: 4 }))
+
+export const BOOKS = [...CATALOG, ...AUTHOR_BOOKS, ...UNSECTIONED_BOOKS]

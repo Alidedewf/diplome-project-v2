@@ -5,7 +5,7 @@ import { Prisma, prisma } from '../db.js'
 import { checkPassword, hashPassword, publicUser, requireAuth } from '../lib/auth.js'
 import { bookColumns, ensureBook, toBook } from '../lib/books.js'
 import { HttpError, pageSchema, parse } from '../lib/http.js'
-import { sectionLabel } from '../lib/sections.js'
+import { SECTION_NAMES, sectionLabel } from '../lib/sections.js'
 import { loadProfile } from '../services/recommender.js'
 import { emailSchema, nameSchema, passwordSchema } from './auth.js'
 
@@ -15,15 +15,30 @@ router.use(requireAuth)
 const SHELVES = ['want', 'reading', 'read']
 const key = (req) => ({ userId_bookId: { userId: req.user.id, bookId: req.params.bookId } })
 
-// Книга на полке; updatedAt меняется, только если книга переехала на другую полку
-async function putOnShelf(userId, bookId, shelf, db = prisma) {
+// Книга на полке; updatedAt меняется, только если книга переехала на другую полку.
+// readAt — дата прочтения: при первом попадании на «Прочитал» — сейчас, при переездах сохраняется,
+// переданная явно — заменяет прежнюю. Возвращает итоговый readAt
+async function putOnShelf(userId, bookId, shelf, db = prisma, readAt = null) {
   const now = new Date()
   await db.$executeRaw`
-    INSERT INTO shelves (user_id, book_id, shelf, created_at, updated_at)
-    VALUES (${userId}, ${bookId}, ${shelf}::shelf_kind, ${now}, ${now})
-    ON CONFLICT (user_id, book_id) DO UPDATE SET shelf = EXCLUDED.shelf, updated_at = EXCLUDED.updated_at
-    WHERE shelves.shelf <> EXCLUDED.shelf`
+    INSERT INTO shelves (user_id, book_id, shelf, created_at, updated_at, read_at)
+    VALUES (${userId}, ${bookId}, ${shelf}::shelf_kind, ${now}, ${now}, ${shelf === 'read' ? (readAt ?? now) : null})
+    ON CONFLICT (user_id, book_id) DO UPDATE SET
+      shelf = EXCLUDED.shelf,
+      updated_at = CASE WHEN shelves.shelf <> EXCLUDED.shelf THEN EXCLUDED.updated_at ELSE shelves.updated_at END,
+      read_at = CASE WHEN ${readAt}::timestamptz IS NOT NULL THEN ${readAt}::timestamptz
+                     WHEN EXCLUDED.shelf = 'read' THEN coalesce(shelves.read_at, EXCLUDED.updated_at)
+                     ELSE shelves.read_at END
+    WHERE shelves.shelf <> EXCLUDED.shelf OR ${readAt}::timestamptz IS NOT NULL`
+  const [row] = await db.$queryRaw`SELECT read_at FROM shelves WHERE user_id = ${userId} AND book_id = ${bookId}`
+  return row.read_at
 }
+
+// Дата прочтения вручную: «2025-12-31» (день — полдень UTC, чтобы в любом поясе остался тем же днём)
+// или полная дата со временем; не раньше 1900 года и не в будущем
+const readAtSchema = z.union([z.iso.date(), z.iso.datetime({ offset: true })])
+  .transform((s) => new Date(s.length === 10 ? `${s}T12:00:00Z` : s))
+  .refine((d) => d.getUTCFullYear() >= 1900 && d.getTime() <= Date.now() + 24 * 3600 * 1000, 'Дата прочтения — не раньше 1900 года и не в будущем')
 
 // ——— Оценки ———
 
@@ -33,15 +48,15 @@ const ratingSchema = z.object({ value: z.number().int().min(1).max(5) })
 router.put('/ratings/:bookId', async (req, res) => {
   const { value } = parse(ratingSchema, req.body)
   await ensureBook(req.params.bookId)
-  await prisma.$transaction(async (tx) => {
+  const readAt = await prisma.$transaction(async (tx) => {
     await tx.rating.upsert({
       where: key(req),
       create: { userId: req.user.id, bookId: req.params.bookId, value },
       update: { value },
     })
-    await putOnShelf(req.user.id, req.params.bookId, 'read', tx)
+    return putOnShelf(req.user.id, req.params.bookId, 'read', tx)
   })
-  res.json({ bookId: req.params.bookId, rating: value, shelf: 'read' })
+  res.json({ bookId: req.params.bookId, rating: value, shelf: 'read', readAt })
 })
 
 router.delete('/ratings/:bookId', async (req, res) => {
@@ -51,13 +66,16 @@ router.delete('/ratings/:bookId', async (req, res) => {
 
 // ——— Полки ———
 
-const shelfSchema = z.object({ shelf: z.enum(SHELVES) })
+// { shelf, readAt? } — readAt только для «Прочитал»
+const shelfSchema = z.object({ shelf: z.enum(SHELVES), readAt: readAtSchema.optional() })
+  .refine((b) => !b.readAt || b.shelf === 'read', { path: ['readAt'], message: 'Дату прочтения можно задать только для полки «Прочитал»' })
 
+// → { bookId, shelf, readAt } (readAt — null, если книга ни разу не была прочитана)
 router.put('/shelves/:bookId', async (req, res) => {
-  const { shelf } = parse(shelfSchema, req.body)
+  const { shelf, readAt } = parse(shelfSchema, req.body)
   await ensureBook(req.params.bookId)
-  await putOnShelf(req.user.id, req.params.bookId, shelf)
-  res.json({ bookId: req.params.bookId, shelf })
+  const saved = await putOnShelf(req.user.id, req.params.bookId, shelf, prisma, readAt)
+  res.json({ bookId: req.params.bookId, shelf, readAt: saved })
 })
 
 router.delete('/shelves/:bookId', async (req, res) => {
@@ -105,41 +123,54 @@ router.post('/events', async (req, res) => {
 
 // ——— Кабинет: списки ———
 
-const listShelfSchema = z.object({ shelf: z.enum(SHELVES).optional(), ...pageSchema })
+// Сортировка списков кабинета: date — сначала новые (по умолчанию), title — по названию, rating — по моей оценке
+const SHELF_ORDER = {
+  date: Prisma.sql`s.updated_at DESC`,
+  readDate: Prisma.sql`s.read_at DESC NULLS LAST, s.updated_at DESC`, // date на полке «Прочитал»
+  title: Prisma.sql`lower(b.title)`,
+  rating: Prisma.sql`r.value DESC NULLS LAST, s.updated_at DESC`,
+}
+const listShelfSchema = z.object({ shelf: z.enum(SHELVES).optional(), sort: z.enum(['date', 'title', 'rating']).default('date'), ...pageSchema })
 
-// { items: [{ book, shelf, rating, addedAt }], total, counts: { want, reading, read } }
+// { items: [{ book, shelf, rating, addedAt, readAt }], total, counts: { want, reading, read } }
+// addedAt — когда книга попала на эту полку, readAt — дата прочтения (null, если не читал).
+// На полке «Прочитал» sort=date — по дате прочтения
 router.get('/shelves', async (req, res) => {
-  const { shelf, limit, offset } = parse(listShelfSchema, req.query)
+  const { shelf, sort, limit, offset } = parse(listShelfSchema, req.query)
   const userId = req.user.id
   const where = shelf ? Prisma.sql`AND s.shelf = ${shelf}::shelf_kind` : Prisma.empty
+  const order = SHELF_ORDER[sort === 'date' && shelf === 'read' ? 'readDate' : sort]
   const [rows, counts] = await Promise.all([
     prisma.$queryRaw`
-      SELECT ${bookColumns('b')}, s.shelf::text AS my_shelf, s.updated_at AS added_at, r.value AS my_rating
+      SELECT ${bookColumns('b')}, s.shelf::text AS my_shelf, s.updated_at AS added_at, s.read_at, r.value AS my_rating
       FROM shelves s JOIN books b ON b.id = s.book_id
       LEFT JOIN ratings r ON r.user_id = s.user_id AND r.book_id = s.book_id
       WHERE s.user_id = ${userId} ${where}
-      ORDER BY s.updated_at DESC, s.book_id LIMIT ${limit} OFFSET ${offset}`,
+      ORDER BY ${order}, s.book_id LIMIT ${limit} OFFSET ${offset}`,
     prisma.shelf.groupBy({ by: ['shelf'], where: { userId }, _count: true }),
   ])
   const byShelf = Object.fromEntries(SHELVES.map((s) => [s, 0]))
   for (const c of counts) byShelf[c.shelf] = c._count
   res.json({
-    items: rows.map((r) => ({ book: toBook(r), shelf: r.my_shelf, rating: r.my_rating, addedAt: r.added_at })),
+    items: rows.map((r) => ({ book: toBook(r), shelf: r.my_shelf, rating: r.my_rating, addedAt: r.added_at, readAt: r.read_at })),
     total: shelf ? byShelf[shelf] : Object.values(byShelf).reduce((a, b) => a + b, 0),
     counts: byShelf,
   })
 })
 
+const RATING_ORDER = { date: Prisma.sql`r.updated_at DESC`, rating: Prisma.sql`r.value DESC, r.updated_at DESC` }
+const listRatingsSchema = z.object({ sort: z.enum(['date', 'rating']).default('date'), ...pageSchema })
+
 // { items: [{ book, rating, ratedAt }], total }
 router.get('/ratings', async (req, res) => {
-  const { limit, offset } = parse(z.object(pageSchema), req.query)
+  const { sort, limit, offset } = parse(listRatingsSchema, req.query)
   const userId = req.user.id
   const [rows, total] = await Promise.all([
     prisma.$queryRaw`
       SELECT ${bookColumns('b')}, r.value AS my_rating, r.updated_at AS rated_at
       FROM ratings r JOIN books b ON b.id = r.book_id
       WHERE r.user_id = ${userId}
-      ORDER BY r.updated_at DESC, r.book_id LIMIT ${limit} OFFSET ${offset}`,
+      ORDER BY ${RATING_ORDER[sort]}, r.book_id LIMIT ${limit} OFFSET ${offset}`,
     prisma.rating.count({ where: { userId } }),
   ])
   res.json({ items: rows.map((r) => ({ book: toBook(r), rating: r.my_rating, ratedAt: r.rated_at })), total })
@@ -164,11 +195,17 @@ router.get('/hidden', async (req, res) => {
 
 const topicLabel = (kind, value) => (kind === 'section' ? sectionLabel(value) : value)
 
-// { items: [{ kind, value, label, source, weight }], rejected: [{ kind, value, label }] }
-// Выбранное в онбординге + выведенное из понравившихся книг; weight — сколько понравившихся книг в теме
+// { items: [{ kind, value, label, source, weight }], rejected: [{ kind, value, label }], description }
+// Выбранное в онбординге + выведенное из понравившихся книг; weight — сколько понравившихся книг в теме.
+// description — последнее «Опишите своими словами» из онбординга (или null)
 async function taste(userId) {
-  const [profile, topics] = await Promise.all([loadProfile(userId), prisma.userTopic.findMany({ where: { userId } })])
+  const [profile, topics, lastDescription] = await Promise.all([
+    loadProfile(userId),
+    prisma.userTopic.findMany({ where: { userId } }),
+    prisma.event.findFirst({ where: { userId, type: 'onboarding_description' }, orderBy: { id: 'desc' }, select: { query: true } }),
+  ])
   const items = new Map()
+  const explicit = new Set()
   const add = (kind, value, source, weight = 0) => {
     if (!value || profile.rejected[kind].has(value)) return
     const k = `${kind}:${value}`
@@ -176,18 +213,22 @@ async function taste(userId) {
     item.weight += weight
     items.set(k, item)
   }
-  for (const t of topics) if (!t.rejected) add(t.kind, t.value, t.source)
+  for (const t of topics) {
+    if (t.rejected) continue
+    explicit.add(`${t.kind}:${t.value}`)
+    add(t.kind, t.value, t.source)
+  }
   for (const b of profile.liked) {
     add('section', b.section, 'profile', 1)
     add('subsection', b.subsection, 'profile', 1)
     add('author', b.author, 'profile', 1)
   }
-  // Выведенные пункты с одной книгой — шум, кроме разделов
+  // Выведенные пункты с одной книгой — шум, кроме разделов и пунктов, которые пользователь выбрал или вернул сам
   const list = [...items.values()]
-    .filter((i) => i.source === 'onboarding' || i.kind === 'section' || i.weight >= 2)
+    .filter((i) => explicit.has(`${i.kind}:${i.value}`) || i.kind === 'section' || i.weight >= 2)
     .sort((a, b) => (a.source === 'onboarding' ? -1 : 0) - (b.source === 'onboarding' ? -1 : 0) || b.weight - a.weight)
   const rejected = topics.filter((t) => t.rejected).map((t) => ({ kind: t.kind, value: t.value, label: topicLabel(t.kind, t.value) }))
-  return { items: list, rejected }
+  return { items: list, rejected, description: lastDescription?.query ?? null }
 }
 
 router.get('/taste', async (req, res) => {
@@ -214,40 +255,89 @@ router.patch('/taste', async (req, res) => {
 
 // ——— Статистика и цель (2.2, п. 5) ———
 
-const statsSchema = z.object({ year: z.coerce.number().int().min(1900).max(2100).optional() })
+// Год и месяц прочтения считаются в часовом поясе пользователя (tz=Asia/Almaty, по умолчанию UTC):
+// иначе книга, отмеченная 1 января в 01:00 по Алматы, попала бы в прошлый год.
+// Список поясов — из самой базы, чтобы неизвестное имя давало 400, а не ошибку SQL
+let timeZones
+async function knownTimeZone(tz) {
+  timeZones ??= new Set((await prisma.$queryRaw`SELECT name FROM pg_timezone_names`).map((r) => r.name))
+  return timeZones.has(tz)
+}
+const tzSchema = z.string().min(1).max(64).default('UTC')
+async function parseTimeZone(tz) {
+  if (!(await knownTimeZone(tz))) {
+    throw new HttpError(400, 'validation_error', 'Некорректные данные запроса', [{ path: 'tz', message: 'Неизвестный часовой пояс' }])
+  }
+  return tz
+}
+// Текущий год в поясе пользователя
+const yearNow = (tz) => Number(new Intl.DateTimeFormat('en', { timeZone: tz, year: 'numeric' }).format(new Date()))
+const localYear = (column, tz) => Prisma.sql`extract(year FROM ${Prisma.raw(column)} AT TIME ZONE ${tz})::int`
 
-// Дата прочтения — когда книга попала на полку «Прочитал»
+async function readInYear(userId, year, tz) {
+  const [{ n }] = await prisma.$queryRaw`
+    SELECT count(*)::int AS n FROM shelves
+    WHERE user_id = ${userId} AND shelf = 'read' AND ${localYear('read_at', tz)} = ${year}`
+  return n
+}
+
+const OTHER_SECTION = 'Другое'
+const statsSchema = z.object({ year: z.coerce.number().int().min(1900).max(2100).optional(), tz: tzSchema })
+
+// Всё, кроме readTotal, — за выбранный год. Дата прочтения — read_at (первое попадание на «Прочитал»
+// или заданная вручную), дата оценки — когда её поставили или изменили.
+// Книги без раздела онбординга (служебные категории Amazon: «Boxed Sets», «Deals in Books»…) — в «Другое»: section null
+// { year, timeZone, years, readTotal, readThisYear, byMonth: [{ month, count }] × 12,
+//   bySection: [{ section, label, count, averageRating }], ratings: { count, average, distribution }, goal }
 router.get('/stats', async (req, res) => {
   const userId = req.user.id
-  const year = parse(statsSchema, req.query).year ?? new Date().getFullYear()
-  const [byMonth, bySection, ratings, readTotal, goal] = await Promise.all([
+  const query = parse(statsSchema, req.query)
+  const tz = await parseTimeZone(query.tz)
+  const year = query.year ?? yearNow(tz)
+  const [byMonth, bySection, ratings, readTotal, years, goal] = await Promise.all([
     prisma.$queryRaw`
-      SELECT extract(month FROM updated_at)::int AS month, count(*)::int AS count FROM shelves
-      WHERE user_id = ${userId} AND shelf = 'read' AND extract(year FROM updated_at) = ${year}
+      SELECT extract(month FROM read_at AT TIME ZONE ${tz})::int AS month, count(*)::int AS count FROM shelves
+      WHERE user_id = ${userId} AND shelf = 'read' AND ${localYear('read_at', tz)} = ${year}
       GROUP BY 1 ORDER BY 1`,
+    // Любимые разделы: сколько прочитано за год и как я оценил прочитанное в разделе
     prisma.$queryRaw`
-      SELECT coalesce(b.section, b.category) AS section, count(*)::int AS count
+      SELECT CASE WHEN b.section IS NOT NULL THEN b.section
+                  WHEN b.category = ANY(${Object.keys(SECTION_NAMES)}::text[]) THEN b.category END AS section,
+             count(*)::int AS count, round(avg(r.value), 1)::float AS "averageRating"
       FROM shelves s JOIN books b ON b.id = s.book_id
-      WHERE s.user_id = ${userId} AND s.shelf = 'read' AND coalesce(b.section, b.category) IS NOT NULL
-      GROUP BY 1 ORDER BY 2 DESC LIMIT 10`,
-    prisma.rating.groupBy({ by: ['value'], where: { userId }, _count: true }),
+      LEFT JOIN ratings r ON r.user_id = s.user_id AND r.book_id = s.book_id
+      WHERE s.user_id = ${userId} AND s.shelf = 'read' AND ${localYear('s.read_at', tz)} = ${year}
+      GROUP BY 1 ORDER BY 2 DESC, 3 DESC NULLS LAST`,
+    prisma.$queryRaw`
+      SELECT value, count(*)::int AS count FROM ratings
+      WHERE user_id = ${userId} AND ${localYear('updated_at', tz)} = ${year} GROUP BY 1`,
     prisma.shelf.count({ where: { userId, shelf: 'read' } }),
+    // Годы для переключателя: где есть прочитанное, оценки или цель, плюс текущий
+    prisma.$queryRaw`
+      SELECT ${localYear('read_at', tz)} AS year FROM shelves WHERE user_id = ${userId} AND shelf = 'read'
+      UNION SELECT ${localYear('updated_at', tz)} FROM ratings WHERE user_id = ${userId}
+      UNION SELECT year FROM reading_goals WHERE user_id = ${userId}`,
     prisma.readingGoal.findUnique({ where: { userId_year: { userId, year } } }),
   ])
   const months = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, count: 0 }))
   for (const m of byMonth) months[m.month - 1].count = m.count
   const readThisYear = months.reduce((s, m) => s + m.count, 0)
   const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
-  for (const r of ratings) distribution[r.value] = r._count
-  const ratingsCount = ratings.reduce((s, r) => s + r._count, 0)
-  const ratingsSum = ratings.reduce((s, r) => s + r.value * r._count, 0)
+  for (const r of ratings) distribution[r.value] = r.count
+  const ratingsCount = ratings.reduce((s, r) => s + r.count, 0)
+  const ratingsSum = ratings.reduce((s, r) => s + r.value * r.count, 0)
 
   res.json({
     year,
+    timeZone: tz,
+    years: [...new Set([yearNow(tz), ...years.map((y) => y.year)])].sort((a, b) => b - a),
     readTotal,
     readThisYear,
     byMonth: months,
-    bySection: bySection.map((s) => ({ ...s, label: sectionLabel(s.section) })),
+    // До 10 разделов по числу прочитанного, «Другое» — последним
+    bySection: [...bySection.filter((s) => s.section).slice(0, 10), ...bySection.filter((s) => !s.section)].map((s) => ({
+      section: s.section, label: s.section ? sectionLabel(s.section) : OTHER_SECTION, count: s.count, averageRating: s.averageRating,
+    })),
     ratings: {
       count: ratingsCount,
       average: ratingsCount ? Math.round((ratingsSum / ratingsCount) * 100) / 100 : null,
@@ -260,20 +350,29 @@ router.get('/stats', async (req, res) => {
 const goalSchema = z.object({
   target: z.number().int().min(1).max(1000),
   year: z.number().int().min(2000).max(2100).optional(),
+  tz: tzSchema,
 })
 
+// { year, target, done } — done считается так же, как readThisYear в статистике
 router.put('/goal', async (req, res) => {
-  const { target, year = new Date().getFullYear() } = parse(goalSchema, req.body)
+  const body = parse(goalSchema, req.body)
+  const tz = await parseTimeZone(body.tz)
+  const { target, year = yearNow(tz) } = body
   const userId = req.user.id
   await prisma.readingGoal.upsert({
     where: { userId_year: { userId, year } },
     create: { userId, year, target },
     update: { target },
   })
-  const done = await prisma.$queryRaw`
-    SELECT count(*)::int AS n FROM shelves
-    WHERE user_id = ${userId} AND shelf = 'read' AND extract(year FROM updated_at) = ${year}`
-  res.json({ year, target, done: done[0].n })
+  res.json({ year, target, done: await readInYear(userId, year, tz) })
+})
+
+// Убрать цель года (по умолчанию — текущего)
+router.delete('/goal', async (req, res) => {
+  const query = parse(z.object({ year: z.coerce.number().int().min(2000).max(2100).optional(), tz: tzSchema }), req.query)
+  const tz = await parseTimeZone(query.tz)
+  await prisma.readingGoal.deleteMany({ where: { userId: req.user.id, year: query.year ?? yearNow(tz) } })
+  res.status(204).end()
 })
 
 // ——— Профиль и аккаунт (2.2, п. 6) ———

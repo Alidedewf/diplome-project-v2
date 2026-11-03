@@ -9,7 +9,8 @@ describe('оценки и полки', () => {
   it('оценка ставит книгу на полку «Прочитал», меняется и удаляется', async () => {
     const u = await registerUser()
     const put = await request(app).put(`/api/me/ratings/${book.id}`).set(u.auth).send({ value: 4 }).expect(200)
-    expect(put.body).toEqual({ bookId: book.id, rating: 4, shelf: 'read' })
+    expect(put.body).toMatchObject({ bookId: book.id, rating: 4, shelf: 'read' })
+    expect(Date.parse(put.body.readAt)).toBeGreaterThan(Date.now() - 60_000)
     await request(app).put(`/api/me/ratings/${book.id}`).set(u.auth).send({ value: 5 }).expect(200)
 
     const card = await request(app).get(`/api/books/${book.id}`).set(u.auth).expect(200)

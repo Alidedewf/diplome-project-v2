@@ -53,10 +53,11 @@ model Book {
   // dbgenerated повторяет её выражение, чтобы Prisma не видела расхождения со схемой
   searchVector       Unsupported("tsvector")? @default(dbgenerated("(setweight(to_tsvector('english'::regconfig, title), 'A'::\"char\") || setweight(to_tsvector('simple'::regconfig, COALESCE(author, ''::text)), 'B'::\"char\"))")) @map("search_vector")
 
-  ratings  Rating[]
-  shelves  Shelf[]
-  hidden   HiddenBook[]
-  events   Event[]
+  ratings    Rating[]
+  shelves    Shelf[]
+  hidden     HiddenBook[]
+  events     Event[]
+  embeddings BookEmbedding[]
 
   @@index([section, ratingsCount(sort: Desc)])
   @@index([section, weightedRating(sort: Desc)])
@@ -101,13 +102,17 @@ model Shelf {
   bookId    String    @map("book_id") @db.VarChar(16)
   shelf     ShelfKind
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
+  updatedAt DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3) // когда книга попала на эту полку
+  // Дата прочтения: ставится при первом попадании на «Прочитал» или вручную; при переезде на другую полку
+  // сохраняется (вернули на «Прочитал» — дата прежняя). По ней — статистика по месяцам
+  readAt    DateTime? @map("read_at") @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
 
   @@id([userId, bookId])
   @@index([userId, shelf, updatedAt(sort: Desc)])
+  @@index([userId, readAt(sort: Desc)])
   @@index([bookId])
   @@map("shelves")
 }
@@ -188,4 +193,33 @@ model ReadingGoal {
 
   @@id([userId, year])
   @@map("reading_goals")
+}
+
+// Модели эмбеддингов (решения.md 3.5, 3.8): векторы книг считает ML-часть, загружает scripts/load-embeddings.js.
+// Моделей может быть несколько сразу (сравнение кандидатов в эксперименте); размерность — у каждой своя
+model EmbeddingModel {
+  name     String   @id @db.VarChar(100) // например intfloat/multilingual-e5-small
+  dim      Int      @db.SmallInt         // 384, 768…
+  books    Int      @default(0)          // сколько книг загружено
+  loadedAt DateTime @default(now()) @map("loaded_at") @db.Timestamptz(3)
+
+  embeddings BookEmbedding[]
+
+  @@map("embedding_models")
+}
+
+// Вектор книги. Колонка vector без размерности, чтобы в одной таблице жили модели 384 и 768;
+// HNSW-индекс (косинусное расстояние) — свой у каждой модели, по выражению embedding::vector(dim)
+// с условием model = …; его создаёт скрипт загрузки (Prisma такие индексы не описывает)
+model BookEmbedding {
+  bookId    String                 @map("book_id") @db.VarChar(16)
+  model     String                 @db.VarChar(100)
+  embedding Unsupported("vector")
+
+  book           Book           @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  embeddingModel EmbeddingModel @relation(fields: [model], references: [name], onDelete: Cascade)
+
+  @@id([model, bookId])
+  @@index([bookId])
+  @@map("book_embeddings")
 }
