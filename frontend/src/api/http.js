@@ -45,7 +45,8 @@ function toQuery(params) {
   return s ? `?${s}` : ''
 }
 
-export async function request(path, { method = 'GET', params, body, signal } = {}) {
+// keepalive — запрос доживёт до конца, даже если вкладку закрывают (события)
+export async function request(path, { method = 'GET', params, body, signal, keepalive } = {}) {
   const token = getToken()
   const headers = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
@@ -58,6 +59,7 @@ export async function request(path, { method = 'GET', params, body, signal } = {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
+      keepalive,
     })
   } catch (err) {
     if (err.name === 'AbortError') throw err

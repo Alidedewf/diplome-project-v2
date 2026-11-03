@@ -17,7 +17,15 @@
 //   getOnboardingRound()   → { session, round, done, items: [{ book, reason }] }
 //   sendOnboardingAnswers({ topics?, description?, round?, answers?: [{ bookId, answer: 'like' | 'dislike' | 'unread', source?: 'round' | 'search' }], completed? }) → { saved, user }
 //   setRating(id, 1–5 | null), setShelf(id, 'want' | 'reading' | 'read' | null), setHidden(id, bool)
-//   getTaste()             → { items: [{ kind, value, label, source, weight }], rejected }
+//   getShelves(p)          → { items: [{ book, shelf, rating, addedAt }], total, counts: { want, reading, read } }   p: { shelf?, limit?, offset? }
+//   getRatings(p)          → { items: [{ book, rating, ratedAt }], total };  getHidden(p) → { items: [{ book, hiddenAt }], total }
+//   getTaste()             → { items: [{ kind, value, label, source: 'onboarding' | 'profile', weight }], rejected: [{ kind, value, label }] }
+//   updateTaste({ kind: 'section' | 'subsection' | 'author', value, rejected }) → как getTaste
+//   getStats(year?)        → { year, readTotal, readThisYear, byMonth: [{ month, count }], bySection: [{ section, label, count }],
+//                              ratings: { count, average, distribution: { 1..5 } }, goal: { year, target, done } | null }
+//   setGoal({ target, year? }) → { year, target, done }
+//   updateProfile({ name?, email?, password?, currentPassword? }) → User;  deleteAccount(password) → null
+//   sendEvents([{ type: 'view' | 'rec_click', bookId, payload? }], { keepalive? }) → { saved }
 // Ошибки — ApiError { status, code, message (по-русски, для пользователя), details? }.
 import * as mock from './mock.js'
 import * as server from './server.js'
@@ -41,7 +49,16 @@ export const {
   setRating,
   setShelf,
   setHidden,
+  getShelves,
+  getRatings,
+  getHidden,
   getTaste,
+  updateTaste,
+  getStats,
+  setGoal,
+  updateProfile,
+  deleteAccount,
+  sendEvents,
 } = api
 
 export { ApiError, getToken, setToken, setUnauthorizedHandler } from './http.js'

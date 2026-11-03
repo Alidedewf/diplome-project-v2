@@ -1,6 +1,7 @@
 import { ArrowRight, Sparkles } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
+import { trackRecClick } from '../api/events.js'
 import { useBooks, useRecommendations, useSections } from '../api/queries.js'
 import { useAuth } from '../auth/context.js'
 import { BookShelf } from '../components/BookShelf.jsx'
@@ -126,6 +127,7 @@ export function HomePage() {
           withReasons
           loading={recs.isPending}
           error={recs.error}
+          onOpen={(book, reason) => trackRecClick(book, reason, 'for_you')}
         />
       ) : (
         <BookShelf
@@ -152,6 +154,7 @@ export function HomePage() {
               title={`Потому что вам понравилась «${shortTitle(seed.title)}»`}
               subtitle={seed.author}
               items={items.map((it) => it.book)}
+              onOpen={(book) => trackRecClick(book, items.find((it) => it.book.id === book.id)?.reason, 'because_you_liked')}
             />
           ))}
 

@@ -8,6 +8,13 @@ import { BookPage } from './pages/BookPage.jsx'
 import { HomePage } from './pages/HomePage.jsx'
 import { Layout } from './pages/Layout.jsx'
 import { OnboardingPage } from './pages/OnboardingPage.jsx'
+import { HiddenPage } from './pages/me/HiddenPage.jsx'
+import { MeLayout } from './pages/me/MeLayout.jsx'
+import { RatingsPage } from './pages/me/RatingsPage.jsx'
+import { SettingsPage } from './pages/me/SettingsPage.jsx'
+import { ShelvesPage } from './pages/me/ShelvesPage.jsx'
+import { StatsPage } from './pages/me/StatsPage.jsx'
+import { TastePage } from './pages/me/TastePage.jsx'
 import { Placeholder } from './pages/Placeholder.jsx'
 import { SearchPage } from './pages/SearchPage.jsx'
 import { ThemeProvider } from './theme/ThemeProvider.jsx'
@@ -25,7 +32,7 @@ const queryClient = new QueryClient({
 
 const stub = (title, text, soon) => ({ element: <Placeholder title={title} soon={soon}>{text}</Placeholder> })
 
-// Экраны из решения.md, раздел 2. Кабинет (/me/*) пока заглушки
+// Экраны из решения.md, раздел 2
 const router = createBrowserRouter([
   {
     element: <Layout />,
@@ -40,15 +47,17 @@ const router = createBrowserRouter([
         element: <RequireAuth />,
         children: [
           { path: 'onboarding', element: <OnboardingPage /> },
+          // Личный кабинет (2.2)
           {
             path: 'me',
+            element: <MeLayout />,
             children: [
-              { index: true, ...stub('Мои полки', 'Хочу прочитать, Читаю, Прочитал.') },
-              { path: 'ratings', ...stub('Мои оценки') },
-              { path: 'taste', ...stub('Профиль вкусов', 'Что система думает о ваших интересах.') },
-              { path: 'hidden', ...stub('Скрытые книги', 'Всё, что вы отметили «Не интересно».') },
-              { path: 'stats', ...stub('Статистика чтения') },
-              { path: 'settings', ...stub('Профиль и аккаунт') },
+              { index: true, element: <ShelvesPage /> },
+              { path: 'ratings', element: <RatingsPage /> },
+              { path: 'taste', element: <TastePage /> },
+              { path: 'hidden', element: <HiddenPage /> },
+              { path: 'stats', element: <StatsPage /> },
+              { path: 'settings', element: <SettingsPage /> },
             ],
           },
         ],

@@ -1,6 +1,7 @@
 import { BookCheck, BookMarked, BookOpen, ChevronRight, EyeOff, Undo2 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
+import { track, trackRecClick } from '../api/events.js'
 import { useBook, useBookAction, useSimilarBooks } from '../api/queries.js'
 import { loginPath, useAuth } from '../auth/context.js'
 import { BookCover } from '../components/BookCover.jsx'
@@ -115,10 +116,22 @@ function BookPageSkeleton() {
   )
 }
 
+// Сигнал view — один раз на открытие карточки: перерисовки и повторные загрузки той же книги его не дублируют
+function useViewEvent(bookId) {
+  const { user } = useAuth()
+  const sent = useRef(null)
+  useEffect(() => {
+    if (!user || !bookId || sent.current === bookId) return
+    sent.current = bookId
+    track({ type: 'view', bookId })
+  }, [user, bookId])
+}
+
 export function BookPage() {
   const { id } = useParams()
   const { data: book, isPending, error } = useBook(id)
   const similar = useSimilarBooks(id)
+  useViewEvent(book?.id)
 
   if (isPending) return <BookPageSkeleton />
   if (error) {
@@ -180,6 +193,7 @@ export function BookPage() {
         items={similar.data}
         loading={similar.isPending}
         error={similar.error}
+        onOpen={(other) => trackRecClick(other, { kind: 'similar', seedId: book.id }, 'similar')}
       />
     </div>
   )

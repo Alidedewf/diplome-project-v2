@@ -7,8 +7,9 @@ import { Button } from './Button.jsx'
 const ITEM_WIDTH = 'w-[132px] sm:w-[148px] lg:w-[160px]'
 
 // Горизонтальный ряд книг. items — Book[] или [{ book, reason }]; children — панель между заголовком и рядом (фильтры).
-// withReasons — в ряду будут плашки «почему»: скелет заранее держит под них место
-export function BookShelf({ title, subtitle, action, items, withReasons = false, loading = false, error, className, children }) {
+// withReasons — в ряду будут плашки «почему»: скелет заранее держит под них место.
+// onOpen(book, reason) — клик по книге ряда (сигнал rec_click)
+export function BookShelf({ title, subtitle, action, items, withReasons = false, loading = false, error, onOpen, className, children }) {
   const rowRef = useRef(null)
   // Стрелки неактивны на краях ряда; пока ряда нет (загрузка, ошибка, пусто) — обе неактивны
   const [edges, setEdges] = useState({ start: true, end: true })
@@ -72,7 +73,13 @@ export function BookShelf({ title, subtitle, action, items, withReasons = false,
                 <BookCardSkeleton key={i} withReason={withReasons} className={cn(ITEM_WIDTH, 'shrink-0')} />
               ))
             : entries.map(({ book, reason }) => (
-                <BookCard key={book.id} book={book} reason={reason} className={cn(ITEM_WIDTH, 'shrink-0 snap-start')} />
+                <BookCard
+                  key={book.id}
+                  book={book}
+                  reason={reason}
+                  onOpen={onOpen && (() => onOpen(book, reason))}
+                  className={cn(ITEM_WIDTH, 'shrink-0 snap-start')}
+                />
               ))}
         </div>
       )}

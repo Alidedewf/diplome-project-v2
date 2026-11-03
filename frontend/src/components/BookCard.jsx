@@ -7,9 +7,10 @@ import { WhyRecommended } from './WhyRecommended.jsx'
 
 // Под название всегда отведены две строки: авторы и оценки в ряду стоят на одной линии,
 // а высота карточки не зависит от длины названия
-export function BookCard({ book, reason, className }) {
+// onOpen — клик по карточке (сигнал rec_click для рекомендаций)
+export function BookCard({ book, reason, onOpen, className }) {
   return (
-    <Link to={`/book/${book.id}`} className={cn('group flex flex-col gap-2', className)}>
+    <Link to={`/book/${book.id}`} onClick={onOpen} className={cn('group flex flex-col gap-2', className)}>
       <BookCover book={book} className="transition-transform duration-200 group-hover:-translate-y-1" />
       <div className="flex flex-col gap-0.5">
         <h3 className="line-clamp-2 min-h-[2lh] font-serif text-[0.95rem] leading-snug font-semibold group-hover:text-accent-text">

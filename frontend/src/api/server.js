@@ -32,4 +32,15 @@ export const setShelf = (bookId, shelf) =>
 export const setHidden = (bookId, hidden) => request(`/me/hidden/${enc(bookId)}`, { method: hidden ? 'PUT' : 'DELETE' })
 
 // ——— Кабинет ———
+export const getShelves = ({ shelf, limit, offset } = {}) => request('/me/shelves', { params: { shelf, limit, offset } })
+export const getRatings = ({ limit, offset } = {}) => request('/me/ratings', { params: { limit, offset } })
+export const getHidden = ({ limit, offset } = {}) => request('/me/hidden', { params: { limit, offset } })
 export const getTaste = () => request('/me/taste')
+export const updateTaste = (body) => request('/me/taste', { method: 'PATCH', body })
+export const getStats = (year) => request('/me/stats', { params: { year } })
+export const setGoal = (body) => request('/me/goal', { method: 'PUT', body })
+export const updateProfile = (body) => request('/me/profile', { method: 'PATCH', body }).then((r) => r.user)
+export const deleteAccount = (password) => request('/me', { method: 'DELETE', body: { password } })
+
+// ——— Неявные сигналы ———
+export const sendEvents = (events, { keepalive } = {}) => request('/me/events', { method: 'POST', body: { events }, keepalive })

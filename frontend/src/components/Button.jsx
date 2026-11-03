@@ -6,6 +6,9 @@ const variants = {
   ghost: 'text-muted hover:bg-surface-2 hover:text-ink',
   // выбранное состояние для кнопок-переключателей (полки)
   selected: 'border border-accent bg-accent-soft text-accent-text',
+  // необратимые действия (удаление аккаунта)
+  danger: 'bg-red-700 text-white hover:bg-red-800',
+  'danger-outline': 'border border-red-500/40 bg-surface text-red-700 hover:bg-red-500/10 dark:text-red-400',
 }
 
 const sizes = {
