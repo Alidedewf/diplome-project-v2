@@ -1,13 +1,15 @@
 import { BookCheck, BookMarked, BookOpen, ChevronRight, EyeOff, Undo2 } from 'lucide-react'
 import { useState } from 'react'
-import { useParams } from 'react-router'
-import { useBook, useSimilarBooks } from '../api/queries.js'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
+import { useBook, useBookAction, useSimilarBooks } from '../api/queries.js'
+import { loginPath, useAuth } from '../auth/context.js'
 import { BookCover } from '../components/BookCover.jsx'
 import { BookShelf } from '../components/BookShelf.jsx'
 import { Button } from '../components/Button.jsx'
 import { Chip } from '../components/Chip.jsx'
 import { RatingStars } from '../components/RatingStars.jsx'
 import { WhyRecommended } from '../components/WhyRecommended.jsx'
+import { useToast } from '../components/toast-context.js'
 import { formatCount, RATINGS } from '../lib/format.js'
 import { sectionLabel } from '../lib/sections.js'
 import { Placeholder } from './Placeholder.jsx'
@@ -19,23 +21,27 @@ const SHELVES = [
   { id: 'read', label: 'Прочитал', icon: BookCheck },
 ]
 
-// Полка, оценка и «Не интересно» пока живут в состоянии страницы — сохранение появится вместе с API кабинета
-function UserActions() {
-  const [shelf, setShelf] = useState(null)
-  const [myRating, setMyRating] = useState(null)
-  const [hidden, setHidden] = useState(false)
+// Оценка, полки и «Не интересно» — настоящие запросы; интерфейс меняется сразу, при ошибке откатывается.
+// Гостю кнопки видны, но ведут на вход с возвратом на эту книгу (2.2)
+function UserActions({ book }) {
+  const { user } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const toast = useToast()
+  const action = useBookAction(book.id, { onError: (message) => toast(`Не удалось сохранить: ${message}`) })
+  const my = book.my ?? { rating: null, shelf: null, hidden: false }
 
-  const rate = (value) => {
-    setMyRating(value)
-    if (value) setShelf('read')
+  const run = (kind, value) => {
+    if (!user) return navigate(loginPath(location))
+    action.mutate({ kind, value })
   }
 
-  if (hidden) {
+  if (my.hidden) {
     return (
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-surface px-4 py-3 text-sm">
         <EyeOff size={16} className="text-muted" />
         <span className="flex-1">Книга скрыта — она не появится в рекомендациях и подборках.</span>
-        <Button size="sm" variant="ghost" onClick={() => setHidden(false)}>
+        <Button size="sm" variant="ghost" onClick={() => run('hidden', false)}>
           <Undo2 size={15} /> Вернуть
         </Button>
       </div>
@@ -48,10 +54,10 @@ function UserActions() {
         {SHELVES.map(({ id, label, icon: Icon }) => (
           <Button
             key={id}
-            variant={shelf === id ? 'selected' : 'secondary'}
-            aria-pressed={shelf === id}
+            variant={my.shelf === id ? 'selected' : 'secondary'}
+            aria-pressed={my.shelf === id}
             className="flex-1 sm:flex-none"
-            onClick={() => setShelf(shelf === id ? null : id)}
+            onClick={() => run('shelf', my.shelf === id ? null : id)}
           >
             <Icon size={16} /> {label}
           </Button>
@@ -60,12 +66,20 @@ function UserActions() {
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
         <div className="flex items-center gap-3 text-sm">
           <span className="text-muted">Ваша оценка</span>
-          <RatingStars value={myRating} onChange={rate} size={22} />
+          <RatingStars value={my.rating} onChange={(value) => run('rating', value)} size={22} />
         </div>
-        <Button size="sm" variant="ghost" className="-ml-3 sm:ml-0" onClick={() => setHidden(true)}>
+        <Button size="sm" variant="ghost" className="-ml-3 sm:ml-0" onClick={() => run('hidden', true)}>
           <EyeOff size={15} /> Не интересно
         </Button>
       </div>
+      {!user && (
+        <p className="text-sm text-muted">
+          <Link to={loginPath(location)} className="font-medium text-accent-text hover:underline">
+            Войдите
+          </Link>
+          , чтобы ставить оценки и собирать полки.
+        </p>
+      )}
     </div>
   )
 }
@@ -108,7 +122,10 @@ export function BookPage() {
 
   if (isPending) return <BookPageSkeleton />
   if (error) {
-    return <Placeholder title="Книга не найдена">Возможно, ссылка устарела или книги нет в каталоге.</Placeholder>
+    if (error.status === 404) {
+      return <Placeholder title="Книга не найдена">Возможно, ссылка устарела или книги нет в каталоге.</Placeholder>
+    }
+    return <Placeholder title="Не удалось загрузить книгу">{error.message}</Placeholder>
   }
 
   return (
@@ -119,8 +136,8 @@ export function BookPage() {
 
         <div className="flex min-w-0 flex-1 flex-col gap-6">
           <nav aria-label="Раздел" className="flex flex-wrap items-center gap-1 text-sm text-muted">
-            <span>{sectionLabel(book.section)}</span>
-            {book.subsection && (
+            {book.section && <span>{sectionLabel(book.section)}</span>}
+            {book.section && book.subsection && (
               <>
                 <ChevronRight size={14} aria-hidden />
                 <span lang="en">{book.subsection}</span>
@@ -133,7 +150,7 @@ export function BookPage() {
               {book.title}
             </h1>
             <p className="text-lg">
-              <span lang="en">{book.author}</span>
+              {book.author ? <span lang="en">{book.author}</span> : <span className="text-muted">Автор не указан</span>}
               {book.year && <span className="text-muted"> · {book.year}</span>}
             </p>
           </header>
@@ -144,14 +161,14 @@ export function BookPage() {
             <span className="text-sm text-muted">{formatCount(book.ratingsCount, RATINGS)}</span>
           </div>
 
-          <UserActions />
+          <UserActions book={book} />
 
           <WhyRecommended reason={book.recommendation} />
 
-          <Annotation text={book.annotation} />
+          {book.annotation && <Annotation text={book.annotation} />}
 
           <div className="flex flex-wrap gap-2">
-            <Chip>{sectionLabel(book.section)}</Chip>
+            {book.section && <Chip>{sectionLabel(book.section)}</Chip>}
             {book.subsection && <Chip lang="en">{book.subsection}</Chip>}
           </div>
         </div>

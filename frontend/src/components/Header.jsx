@@ -1,6 +1,9 @@
-import { Moon, Search, Sun, User } from 'lucide-react'
-import { Link, useNavigate, useSearchParams } from 'react-router'
+import { BookMarked, LogOut, Moon, Sparkles, Sun, UserRound } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router'
+import { loginPath, useAuth } from '../auth/context.js'
 import { useTheme } from '../theme/context.js'
+import { BookAutocomplete } from './BookAutocomplete.jsx'
 import { Button } from './Button.jsx'
 
 function Logo() {
@@ -15,34 +18,94 @@ function Logo() {
 function SearchBox({ className }) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
-
-  const onSubmit = (e) => {
-    e.preventDefault()
-    const q = new FormData(e.currentTarget).get('q').trim()
-    navigate(q ? `/search?q=${encodeURIComponent(q)}` : '/search')
-  }
+  const { pathname } = useLocation()
+  const current = pathname === '/search' ? (params.get('q') ?? '') : ''
 
   return (
-    <form role="search" onSubmit={onSubmit} className={className}>
-      <label className="flex h-10 items-center gap-2 rounded-full border border-line bg-surface px-4 transition-colors focus-within:border-accent">
-        <Search size={17} className="shrink-0 text-muted" aria-hidden />
-        <input
-          key={params.get('q')}
-          name="q"
-          type="search"
-          defaultValue={params.get('q') ?? ''}
-          placeholder="Название, автор или о чём книга"
-          aria-label="Поиск книг"
-          className="w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted"
-        />
-      </label>
-    </form>
+    <div role="search" className={className}>
+      <BookAutocomplete
+        // новое значение из адреса (переход на /search?q=…) — новое поле
+        key={current}
+        initialValue={current}
+        label="Поиск книг"
+        placeholder="Название, автор или ISBN"
+        onSelect={(book) => navigate(`/book/${book.id}`)}
+        onSubmitQuery={(q) => navigate(q ? `/search?q=${encodeURIComponent(q)}` : '/search')}
+      />
+    </div>
+  )
+}
+
+const initials = (name = '') =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join('') || '?'
+
+function UserMenu({ user, onLogout }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e) => {
+      if (e.type === 'keydown' ? e.key === 'Escape' : !ref.current?.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', close)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', close)
+    }
+  }, [open])
+
+  const item = 'flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm hover:bg-surface-2'
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Меню пользователя ${user.name}`}
+        onClick={() => setOpen(!open)}
+        className="flex size-9 items-center justify-center rounded-full bg-accent text-sm font-semibold text-accent-fg ring-offset-2 ring-offset-paper transition hover:ring-2 hover:ring-accent"
+      >
+        {initials(user.name)}
+      </button>
+      {open && (
+        <div role="menu" className="absolute top-full right-0 z-30 mt-2 w-60 rounded-xl border border-line bg-surface py-1 shadow-lg" onClick={() => setOpen(false)}>
+          <div className="border-b border-line px-4 py-3">
+            <p className="truncate font-medium">{user.name}</p>
+            <p className="truncate text-xs text-muted">{user.email}</p>
+          </div>
+          <Link role="menuitem" to="/me" className={item}>
+            <BookMarked size={16} className="text-muted" /> Мои полки
+          </Link>
+          <Link role="menuitem" to="/me/taste" className={item}>
+            <Sparkles size={16} className="text-muted" /> Профиль вкусов
+          </Link>
+          <Link role="menuitem" to="/me/settings" className={item}>
+            <UserRound size={16} className="text-muted" /> Профиль и аккаунт
+          </Link>
+          <button role="menuitem" type="button" onClick={onLogout} className={`${item} border-t border-line`}>
+            <LogOut size={16} className="text-muted" /> Выйти
+          </button>
+        </div>
+      )}
+    </div>
   )
 }
 
 export function Header() {
   const { theme, toggle } = useTheme()
+  const { user, isLoading, logout } = useAuth()
+  const navigate = useNavigate()
+  const location = useLocation()
   const dark = theme === 'dark'
+  const onAuthPage = ['/login', '/register'].includes(location.pathname)
 
   return (
     <header className="sticky top-0 z-20 border-b border-line bg-paper/90 backdrop-blur">
@@ -60,14 +123,23 @@ export function Header() {
           >
             {dark ? <Sun size={19} /> : <Moon size={19} />}
           </Button>
-          <Link
-            to="/me"
-            aria-label="Личный кабинет"
-            title="Личный кабинет"
-            className="flex size-9 items-center justify-center rounded-full bg-accent-soft text-accent-text ring-1 ring-line transition hover:ring-accent"
-          >
-            <User size={18} />
-          </Link>
+          {user ? (
+            <UserMenu
+              user={user}
+              onLogout={() => {
+                logout()
+                navigate('/')
+              }}
+            />
+          ) : isLoading ? (
+            <span className="size-9 animate-pulse rounded-full bg-surface-2" aria-hidden />
+          ) : (
+            !onAuthPage && (
+              <Button as={Link} to={loginPath(location)} variant="primary" size="sm">
+                Войти
+              </Button>
+            )
+          )}
         </div>
       </div>
     </header>

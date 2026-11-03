@@ -15,10 +15,11 @@ export function BookCard({ book, reason, className }) {
         <h3 className="line-clamp-2 min-h-[2lh] font-serif text-[0.95rem] leading-snug font-semibold group-hover:text-accent-text">
           {book.title}
         </h3>
-        <p className="line-clamp-1 text-sm text-muted">{book.author}</p>
+        {/* без автора строка остаётся — высота карточек в ряду одинаковая */}
+        <p className="line-clamp-1 min-h-[1lh] text-sm text-muted">{book.author}</p>
         <p className="flex items-center gap-1 text-xs text-muted">
           <Star size={12} className="text-star" fill="currentColor" strokeWidth={0} aria-hidden />
-          <span className="font-medium text-ink">{book.rating.toFixed(1)}</span>
+          <span className="font-medium text-ink">{book.rating?.toFixed(1) ?? '—'}</span>
         </p>
       </div>
       <WhyRecommended reason={reason} compact />
