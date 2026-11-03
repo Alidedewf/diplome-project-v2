@@ -212,16 +212,32 @@ export async function getRecommendations(userId, { limit = 16 } = {}) {
 
 // ——— Онбординг (2.3, 3.4) ———
 
-async function onboardingState(userId) {
-  const answers = await prisma.event.findMany({
-    where: { userId, type: 'onboarding_answer' },
-    select: { bookId: true, payload: true },
+// Сессии онбординга: каждый проход — своя сессия, закрывается событием onboarding_complete
+// (настоящее завершение, completed: true). Раунды и остановка по «Нравится» считаются внутри сессии;
+// ответы прошлых сессий остаются в профиле, а отвеченные книги больше не показываются.
+// Ответы без номера сессии (до B2) — сессия 1
+export async function onboardingSession(userId, db = prisma) {
+  const events = await db.event.findMany({
+    where: { userId, type: { in: ['onboarding_answer', 'onboarding_complete'] } },
+    select: { type: true, bookId: true, payload: true },
   })
-  const rounds = answers.map((a) => a.payload?.round ?? 1)
-  const likes = answers.filter((a) => a.payload?.answer === 'like')
+  const closed = events.filter((e) => e.type === 'onboarding_complete').map((e) => e.payload?.session ?? 1)
+  const session = closed.length ? Math.max(...closed) + 1 : 1
+  const all = events.filter((e) => e.type === 'onboarding_answer')
+  const current = all.filter((e) => (e.payload?.session ?? 1) === session)
+  return { session, all, current, answered: current.length }
+}
+
+async function onboardingState(userId) {
+  const { session, all, current } = await onboardingSession(userId)
+  // Номер раунда — по ответам на книги раундов; добавленные через поиск раунд не продвигают
+  const rounds = current.filter((a) => a.payload?.source !== 'search').map((a) => a.payload?.round ?? 1)
   return {
-    shown: answers.map((a) => a.bookId),
-    likedIds: likes.map((a) => a.bookId),
+    session,
+    shown: all.map((a) => a.bookId),
+    // Подразделы, уже проверенные в этой сессии (книги из поиска — не показ подраздела)
+    shownInSession: current.filter((a) => a.payload?.source !== 'search').map((a) => a.bookId),
+    likedIds: current.filter((a) => a.payload?.answer === 'like').map((a) => a.bookId),
     round: rounds.length ? Math.max(...rounds) + 1 : 1,
   }
 }
@@ -255,11 +271,11 @@ async function exploreSections(sections, { exclude, skipSubsections = new Set(),
   }))
 }
 
-// GET /onboarding/next-round — { round, done, items: [{ book, reason }] }
+// GET /onboarding/next-round — { session, round, done, items: [{ book, reason }] }
 export async function getOnboardingRound(userId) {
   const [profile, state] = await Promise.all([loadProfile(userId), onboardingState(userId)])
   const done = state.round > ONBOARDING_MAX_ROUNDS || state.likedIds.length >= ONBOARDING_STOP_LIKES
-  if (done) return { round: state.round, done: true, items: [] }
+  if (done) return { session: state.session, round: state.round, done: true, items: [] }
 
   const exclude = [...new Set([...state.shown, ...profile.excluded])]
   let sections = profile.sections
@@ -270,8 +286,8 @@ export async function getOnboardingRound(userId) {
     sections = rows.map((r) => r.section)
   }
 
-  const shownBooks = state.shown.length
-    ? await prisma.book.findMany({ where: { id: { in: state.shown } }, select: { section: true, subsection: true } })
+  const shownBooks = state.shownInSession.length
+    ? await prisma.book.findMany({ where: { id: { in: state.shownInSession } }, select: { section: true, subsection: true } })
     : []
   const shownSubsections = new Set(shownBooks.map((b) => `${b.section}/${b.subsection}`))
 
@@ -295,5 +311,5 @@ export async function getOnboardingRound(userId) {
     limit: ONBOARDING_ROUND_SIZE - exploit.length,
   })
 
-  return { round: state.round, done: false, items: [...exploit, ...explore] }
+  return { session: state.session, round: state.round, done: false, items: [...exploit, ...explore] }
 }

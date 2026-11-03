@@ -6,6 +6,7 @@ import {
   getRecommendations,
   getSections,
   getSimilarBooks,
+  getTaste,
   searchBooks,
   setHidden,
   setRating,
@@ -54,6 +55,9 @@ export const useSuggest = (q) =>
   })
 
 // ——— Онбординг ———
+
+// Темы и интересы пользователя (/me/taste); staleTime 0 — после онбординга сразу свежие
+export const useTaste = () => useQuery({ queryKey: ['taste'], queryFn: getTaste, staleTime: 0 })
 
 export const useOnboardingRound = () =>
   useQuery({ queryKey: ['onboarding', 'round'], queryFn: getOnboardingRound, staleTime: 0, gcTime: 0 })

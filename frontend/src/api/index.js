@@ -14,8 +14,8 @@
 //   getRecommendations(p)  → { forYou: [{ book, reason }], becauseYouLiked: [{ seed: Book, items: [{ book, reason }] }] }
 //   searchBooks(p)         → { items: Book[], total, fuzzy }   p: { q, section?, year?: '2015' | '2010-2015', rating?, hideRead?, limit?, offset? }
 //   suggestBooks(q)        → [{ id, title, author, year, cover }]
-//   getOnboardingRound()   → { round, done, items: [{ book, reason }] }
-//   sendOnboardingAnswers({ topics?, round?, answers?: [{ bookId, answer: 'like' | 'dislike' | 'unread' }], completed? }) → { saved, user }
+//   getOnboardingRound()   → { session, round, done, items: [{ book, reason }] }
+//   sendOnboardingAnswers({ topics?, description?, round?, answers?: [{ bookId, answer: 'like' | 'dislike' | 'unread', source?: 'round' | 'search' }], completed? }) → { saved, user }
 //   setRating(id, 1–5 | null), setShelf(id, 'want' | 'reading' | 'read' | null), setHidden(id, bool)
 //   getTaste()             → { items: [{ kind, value, label, source, weight }], rejected }
 // Ошибки — ApiError { status, code, message (по-русски, для пользователя), details? }.

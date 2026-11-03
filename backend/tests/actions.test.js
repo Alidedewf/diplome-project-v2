@@ -31,6 +31,21 @@ describe('оценки и полки', () => {
     await request(app).put('/api/me/ratings/NOPE').set(u.auth).send({ value: 3 }).expect(404)
   })
 
+  it('подробности ошибок проверки — по-русски (API-04)', async () => {
+    const u = await registerUser()
+    const details = (res) => Object.fromEntries(res.body.error.details.map((d) => [d.path, d.message]))
+    const rating = await request(app).put(`/api/me/ratings/${book.id}`).set(u.auth).send({ value: 6 }).expect(400)
+    expect(details(rating)).toEqual({ value: 'Не больше 5' })
+    const half = await request(app).put(`/api/me/ratings/${book.id}`).set(u.auth).send({ value: 3.5 }).expect(400)
+    expect(details(half)).toEqual({ value: 'Нужно целое число' })
+    const shelf = await request(app).put(`/api/me/shelves/${book.id}`).set(u.auth).send({ shelf: 'xxx' }).expect(400)
+    expect(details(shelf)).toEqual({ shelf: 'Допустимые значения: want, reading, read' })
+    const page = await request(app).get('/api/books').query({ limit: 1000 }).expect(400)
+    expect(details(page)).toEqual({ limit: 'Не больше 100' })
+    const reg = await request(app).post('/api/auth/register').send({ email: 'x', password: '123' }).expect(400)
+    expect(details(reg)).toEqual({ email: 'Некорректный email', password: 'Пароль — не короче 8 символов', name: 'Обязательное поле' })
+  })
+
   it('книга стоит на одной полке; списки полок со счётчиками', async () => {
     const u = await registerUser()
     await request(app).put(`/api/me/shelves/${book.id}`).set(u.auth).send({ shelf: 'want' }).expect(200)

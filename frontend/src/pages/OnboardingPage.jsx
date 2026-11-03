@@ -3,7 +3,7 @@ import { Check, CircleAlert, CircleSlash, Heart, ThumbsDown, X } from 'lucide-re
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { sendOnboardingAnswers } from '../api/index.js'
-import { useOnboardingRound, useSections } from '../api/queries.js'
+import { useOnboardingRound, useSections, useTaste } from '../api/queries.js'
 import { useAuth } from '../auth/context.js'
 import { BookAutocomplete } from '../components/BookAutocomplete.jsx'
 import { BookCover } from '../components/BookCover.jsx'
@@ -67,9 +67,14 @@ function Footer({ note, children }) {
 
 function TopicsStep({ onNext, onSkip, busy, error }) {
   const sections = useSections()
-  const [selected, setSelected] = useState([])
+  // Вернулся в онбординг — темы, выбранные раньше, уже отмечены (пока пользователь сам их не менял)
+  const taste = useTaste()
+  const saved = taste.data?.items.filter((t) => t.kind === 'section' && t.source === 'onboarding').map((t) => t.value) ?? []
+  const [changed, setSelected] = useState(null)
+  const selected = changed ?? saved
   const [description, setDescription] = useState('')
-  const toggle = (name) => setSelected((s) => (s.includes(name) ? s.filter((x) => x !== name) : [...s, name]))
+  const toggle = (name) => setSelected(selected.includes(name) ? selected.filter((x) => x !== name) : [...selected, name])
+  const loading = sections.isPending || taste.isPending
 
   return (
     <div className="flex flex-col gap-6">
@@ -82,7 +87,7 @@ function TopicsStep({ onNext, onSkip, busy, error }) {
         <ErrorNote error={sections.error} />
       ) : (
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-3" role="group" aria-label="Темы">
-          {sections.isPending
+          {loading
             ? Array.from({ length: 12 }, (_, i) => <div key={i} className="min-h-16 animate-pulse rounded-xl bg-surface-2" />)
             : sections.data.map((s) => {
                 const on = selected.includes(s.name)
@@ -178,13 +183,15 @@ function BooksStep({ round, onNext, onSkip, busy, error }) {
   const answered = items.filter((r) => answers[r.book.id]).length
 
   // Неотмеченные книги уходят как «Не читал»: иначе сервер не засчитает раунд и покажет те же книги.
-  // Добавленные через поиск — как «Нравится»
+  // Добавленные через поиск — как «Нравится» с source: 'search', чтобы отличать их от ответов раунда.
+  // Если добавленная книга есть и в раунде, побеждает добавление: пользователь сам её нашёл
   const collect = (fillUnread) => {
-    const list = items
+    const addedIds = new Set(added.map((b) => b.id))
+    return items
+      .filter(({ book }) => !addedIds.has(book.id))
       .map(({ book }) => ({ bookId: book.id, answer: answers[book.id] ?? (fillUnread ? 'unread' : undefined) }))
       .filter((a) => a.answer)
-    const ids = new Set(list.map((a) => a.bookId))
-    return list.concat(added.filter((b) => !ids.has(b.id)).map((b) => ({ bookId: b.id, answer: 'like' })))
+      .concat(added.map((b) => ({ bookId: b.id, answer: 'like', source: 'search' })))
   }
 
   return (
@@ -306,7 +313,7 @@ export function OnboardingPage() {
     }
   }
 
-  // description сервер пока не сохраняет (нет поля в API) — отправляем, чтобы заработало без правок фронтенда
+  // description — «Опишите своими словами»: сервер хранит одно описание на сессию онбординга для смыслового подбора
   const topicsBody = (sections, description) => ({
     topics: sections.map((value) => ({ kind: 'section', value })),
     description: description || undefined,

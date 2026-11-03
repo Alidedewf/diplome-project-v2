@@ -1,5 +1,6 @@
 // Ошибки API: { error: { code, message, details? } }
 import { z } from 'zod'
+import './zod-ru.js'
 
 export class HttpError extends Error {
   constructor(status, code, message, details) {

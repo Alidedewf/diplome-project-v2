@@ -33,8 +33,8 @@ npm test                        # vitest + supertest, отдельная баз�
 | `GET /search?q=&section=&year=2015\|2010-2015&rating=&hideRead=1&limit=&offset=` | `{ items: Book[], total, fuzzy }` |
 | `GET /search/suggest?q=` | `[{ id, title, author, year, cover }]` |
 | `GET /recommendations?limit=` | `{ forYou: [{ book, reason }], becauseYouLiked: [{ seed, items: [{ book, reason }] }] }` |
-| `GET /onboarding/next-round` | `{ round, done, items: [{ book, reason }] }` |
-| `POST /onboarding/answers` `{ topics?, round?, answers?: [{ bookId, answer: like\|dislike\|unread }], completed? }` | `{ saved, user }` |
+| `GET /onboarding/next-round` | `{ session, round, done, items: [{ book, reason }] }` |
+| `POST /onboarding/answers` `{ topics?, description?, round?, answers?: [{ bookId, answer: like\|dislike\|unread, source?: round\|search }], completed? }` | `{ saved, user }` |
 | `PUT /me/ratings/:bookId` `{ value: 1–5 }` · `DELETE` | `{ bookId, rating, shelf: 'read' }` · 204 |
 | `PUT /me/shelves/:bookId` `{ shelf: want\|reading\|read }` · `DELETE` | `{ bookId, shelf }` · 204 |
 | `PUT /me/hidden/:bookId` · `DELETE` | `{ bookId, hidden: true }` · 204 |
@@ -46,6 +46,8 @@ npm test                        # vitest + supertest, отдельная баз�
 | `PUT /me/goal` `{ target, year? }` | `{ year, target, done }` |
 | `PATCH /me/profile` `{ name?, email?, password?, currentPassword? }` · `DELETE /me` `{ password }` | `{ user }` · 204 |
 
-`Reason` — `{ kind: 'similar' | 'topic' | 'popular', text, seedId? }`.
+`Reason` — `{ kind: 'similar' | 'topic' | 'popular', text, seedId? }`. Ошибки проверки (`validation_error`) — по-русски, в `details: [{ path, message }]`.
+
+Онбординг идёт сессиями: `completed: true` (настоящее завершение) закрывает сессию и ставит `onboardingCompleted`; следующие ответы — новая сессия с раунда 1. Без `completed` («Пропустить») сессия остаётся открытой, возврат продолжает её раунды. Ответы прошлых сессий остаются в профиле. Подсказки `/search/suggest` после входа не показывают скрытые книги.
 
 Рекомендации, онбординг и похожие книги пока считаются заглушками в [src/services/recommender.js](src/services/recommender.js); с появлением ML-сервиса (3.8) меняется только этот модуль.

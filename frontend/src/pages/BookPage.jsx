@@ -123,9 +123,9 @@ export function BookPage() {
   if (isPending) return <BookPageSkeleton />
   if (error) {
     if (error.status === 404) {
-      return <Placeholder title="Книга не найдена">Возможно, ссылка устарела или книги нет в каталоге.</Placeholder>
+      return <Placeholder title="Книга не найдена" soon={false}>Возможно, ссылка устарела или книги нет в каталоге.</Placeholder>
     }
-    return <Placeholder title="Не удалось загрузить книгу">{error.message}</Placeholder>
+    return <Placeholder title="Не удалось загрузить книгу" soon={false}>{error.message}</Placeholder>
   }
 
   return (

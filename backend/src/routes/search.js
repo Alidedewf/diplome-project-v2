@@ -45,6 +45,18 @@ function prefixTsQuery(q) {
   return words.length ? words.map((w) => `${w}:*`).join(' & ') : null
 }
 
+// Нормализованное имя автора: «J.K. Rowling» → «jkrowling». Выражение совпадает с индексом
+// books_author_key_idx (миграция author_key_index) — иначе индекс не используется
+const AUTHOR_KEY_SQL = Prisma.raw(`regexp_replace(lower(coalesce(author, '')), '[^[:alnum:]]', '', 'g')`)
+
+// Имена авторов, совпадающие с запросом после нормализации (обычно одно, бывает «J.K. Rowling» и «J. K. Rowling»)
+async function authorsNamed(q) {
+  const key = q.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+  if (key.length < 3) return []
+  const rows = await prisma.$queryRaw`SELECT DISTINCT author FROM books WHERE ${AUTHOR_KEY_SQL} = ${key} LIMIT 20`
+  return rows.map((r) => r.author)
+}
+
 function filters({ section, year, rating, hideRead }, user) {
   const parts = []
   if (section) parts.push(Prisma.sql`b.section = ${section}`)
@@ -72,15 +84,22 @@ router.get('/search', optionalAuth, async (req, res) => {
     OR b.title ILIKE ${like} OR b.author ILIKE ${like}
     ${isbn ? Prisma.sql`OR b.isbn13 = ${isbn}` : Prisma.empty}
     OR b.id = ${q.toUpperCase()})`
-  const score = Prisma.sql`(
+  // Запрос — имя автора («stephen king», «jk rowling»): сначала его книги по популярности,
+  // а не сборники и путеводители с этим именем в названии (тест-кейс SRCH-02).
+  // Есть ли такой автор — отдельный быстрый запрос по индексу books_author_key_idx; подъём включается,
+  // только если есть, и сравнивает готовые имена — нормализация на каждой найденной книге тормозила широкие запросы
+  const [authors, [{ total: exact }]] = await Promise.all([authorsNamed(q), prisma.$queryRaw`
+    SELECT count(*)::int AS total FROM books b WHERE ${match} ${extra}`])
+  const relevance = Prisma.sql`(
     3 * (lower(b.title) = lower(${q}))::int
     + 2 * (b.title ILIKE ${escapeLike(q) + '%'})::int
     + 5 * (${isbn ? Prisma.sql`coalesce(b.isbn13 = ${isbn}, false) OR` : Prisma.empty} b.id = ${q.toUpperCase()})::int
     + ts_rank(b.search_vector, websearch_to_tsquery('english', ${q}))
     + word_similarity(${q}, b.title) + 0.5 * word_similarity(${q}, coalesce(b.author, ''))
     + 0.1 * ln(1 + b.ratings_count))`
-
-  const [{ total: exact }] = await prisma.$queryRaw`SELECT count(*)::int AS total FROM books b WHERE ${match} ${extra}`
+  const score = authors.length
+    ? Prisma.sql`CASE WHEN b.author = ANY(${authors}::text[]) THEN 100 + ln(1 + b.ratings_count) ELSE ${relevance} END`
+    : relevance
 
   // Точных совпадений мало — добавляем похожие по написанию (опечатки; триграммы, индекс gin_trgm_ops).
   // Порог word_similarity снижен с 0,6 до 0,45: «gillain flyn» → «Gillian Flynn» — 0,47
@@ -110,14 +129,18 @@ const suggestSchema = z.object({
   limit: z.coerce.number().int().min(1).max(20).default(8),
 })
 
-// GET /search/suggest?q= → [{ id, title, author, year, cover }] — автодополнение при вводе
-router.get('/search/suggest', async (req, res) => {
+// GET /search/suggest?q= → [{ id, title, author, year, cover }] — автодополнение при вводе.
+// Скрытые пользователем книги («Не интересно») в подсказках не показываем (тест-кейс SRCH-15)
+router.get('/search/suggest', optionalAuth, async (req, res) => {
   const { q, limit } = parse(suggestSchema, req.query)
   const tsq = prefixTsQuery(q)
   const rows = await prisma.$queryRaw`
     SELECT b.id, b.title, b.author, b.year, b.cover FROM books b
-    WHERE b.title ILIKE ${escapeLike(q) + '%'}
-      ${tsq ? Prisma.sql`OR b.search_vector @@ to_tsquery('english', ${tsq})` : Prisma.empty}
+    WHERE (b.title ILIKE ${escapeLike(q) + '%'}
+      ${tsq ? Prisma.sql`OR b.search_vector @@ to_tsquery('english', ${tsq})` : Prisma.empty})
+      ${req.user
+        ? Prisma.sql`AND NOT EXISTS (SELECT 1 FROM hidden_books h WHERE h.user_id = ${req.user.id} AND h.book_id = b.id)`
+        : Prisma.empty}
     ORDER BY (b.title ILIKE ${escapeLike(q) + '%'}) DESC, b.ratings_count DESC
     LIMIT ${limit}`
   res.json(rows)

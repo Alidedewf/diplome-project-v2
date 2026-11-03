@@ -1,7 +1,7 @@
 import request from 'supertest'
 import { describe, expect, it } from 'vitest'
-import { BOOKS } from './fixtures.js'
-import { app } from './helpers.js'
+import { AUTHOR_BOOKS, BOOKS } from './fixtures.js'
+import { app, registerUser } from './helpers.js'
 
 const BOOK_KEYS = ['annotation', 'author', 'cover', 'id', 'rating', 'ratingsCount', 'section', 'subsection', 'title', 'year']
 
@@ -37,6 +37,26 @@ describe('каталог и поиск', () => {
     const typo = await request(app).get('/api/search').query({ q: 'fantazy book' }).expect(200)
     expect(typo.body.fuzzy).toBe(true)
     expect(typo.body.items[0].subsection).toBe('Fantasy')
+  })
+
+  it('запрос по имени автора: сначала его книги по популярности, потом книги о нём (SRCH-02)', async () => {
+    const order = AUTHOR_BOOKS.filter((b) => b.author === 'Mara Quill')
+      .sort((a, b) => b.ratingsCount - a.ratingsCount).map((b) => b.id)
+    for (const q of ['mara quill', 'MARA  QUILL', 'Mara-Quill']) {
+      const res = await request(app).get('/api/search').query({ q }).expect(200)
+      expect(res.body.items.map((b) => b.id)).toEqual([...order, 'Q000000004'])
+    }
+  })
+
+  it('скрытая книга не попадает в подсказки, но гость её видит (SRCH-15)', async () => {
+    const u = await registerUser()
+    const [hidden, kept] = AUTHOR_BOOKS
+    const ids = async (auth) => (await request(app).get('/api/search/suggest').query({ q: 'mara' }).set(auth).expect(200))
+      .body.map((b) => b.id)
+    await request(app).put(`/api/me/hidden/${hidden.id}`).set(u.auth).expect(200)
+    expect(await ids(u.auth)).not.toContain(hidden.id)
+    expect(await ids(u.auth)).toContain(kept.id)
+    expect(await ids({})).toContain(hidden.id)
   })
 
   it('фильтры поиска', async () => {
