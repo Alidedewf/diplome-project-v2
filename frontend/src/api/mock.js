@@ -1,16 +1,169 @@
 // Запасной режим без сервера (VITE_USE_MOCKS=1): данные из shared/mock/books_sample.json,
 // пользователи и их действия — в localStorage. Формы ответов те же, что у настоящего API (см. ./index.js).
 import { shortTitle } from '../lib/format.js'
-import { sectionLabel } from '../lib/sections.js'
+import { sectionLabel, subsectionLabel } from '../lib/sections.js'
 import { ApiError, getToken, setToken } from './http.js'
 
 let dataPromise
 
+// Русские названия и имена авторов (2.8) — небольшая ручная выборка, чтобы в моках было что показать;
+// у остальных книг titleRu / authorRu = null, как у большинства книг на сервере
+const TITLES_RU = {
+  B00L9B7IKE: 'Девушка в поезде',
+  B006LSZECO: 'Исчезнувшая',
+  B00JO8PEN2: 'Соловей',
+  B00DPM7TIG: 'Весь невидимый нам свет',
+  B01COJUEZ0: 'Джентльмен в Москве',
+  '0735219095': 'Там, где раки поют',
+  B072BLVM83: 'Ученица. Предать, чтобы обрести себя',
+  B00AA20E5Y: 'Зов кукушки',
+  B07D2C6J4K: 'Безмолвный пациент',
+  '0439023521': 'Голодные игры',
+  '0375842209': 'Книжный вор',
+  '1607747308': 'Магическая уборка',
+  '0316055433': 'Щегол',
+  '0307887448': 'Первому игроку приготовиться',
+  '0439023513': 'Сойка-пересмешница',
+  '0439023491': 'И вспыхнет пламя',
+  '0316024961': 'Новолуние',
+  '0399226907': 'Очень голодная гусеница',
+  '1524763136': 'Becoming. Моя история',
+  '0062300547': 'Элегия Хиллбилли',
+  '0316015849': 'Сумерки',
+  '1338099132': 'Гарри Поттер и Проклятое дитя',
+  '0062024035': 'Дивергент',
+  '1439156816': 'Как писать книги',
+  '0439784549': 'Гарри Поттер и Принц-полукровка',
+  '0451524934': '1984',
+  '0440212561': 'Чужестранка',
+  '1594746036': 'Дом странных детей',
+  '031606792X': 'Рассвет',
+  '0525478817': 'Виноваты звёзды',
+  '1451673310': '451 градус по Фаренгейту',
+  '038549081X': 'Рассказ служанки',
+}
+const AUTHORS_RU = {
+  'Paula Hawkins': 'Пола Хокинс',
+  'Gillian Flynn': 'Гиллиан Флинн',
+  'Kristin Hannah': 'Кристин Ханна',
+  'Anthony Doerr': 'Энтони Дорр',
+  'John Grisham': 'Джон Гришэм',
+  'Amor Towles': 'Амор Тоулз',
+  'Delia Owens': 'Делия Оуэнс',
+  'Tara Westover': 'Тара Вестовер',
+  'Robert Galbraith': 'Роберт Гэлбрейт',
+  'Alex Michaelides': 'Алекс Михаэлидес',
+  'Suzanne Collins': 'Сьюзен Коллинз',
+  'Markus Zusak': 'Маркус Зусак',
+  'Marie Kondo': 'Мари Кондо',
+  'Donna Tartt': 'Донна Тартт',
+  'Ernest Cline': 'Эрнест Клайн',
+  'Eric Carle': 'Эрик Карл',
+  'Michelle Obama': 'Мишель Обама',
+  'Vance, J. D.': 'Джей Ди Вэнс',
+  'Stephenie Meyer': 'Стефани Майер',
+  'J.K. Rowling': 'Джоан Роулинг',
+  'Veronica Roth': 'Вероника Рот',
+  'Stephen King': 'Стивен Кинг',
+  'George Orwell': 'Джордж Оруэлл',
+  'Diana Gabaldon': 'Диана Гэблдон',
+  'Ransom Riggs': 'Ренсом Риггз',
+  'John Green': 'Джон Грин',
+  'Ray Bradbury': 'Рэй Брэдбери',
+  'Margaret Atwood': 'Маргарет Этвуд',
+  'Malcolm Gladwell': 'Малкольм Гладуэлл',
+  'Bill Bryson': 'Билл Брайсон',
+  'Erik Larson': 'Эрик Ларсон',
+  'Mitch Albom': 'Митч Элбом',
+  'Walter Isaacson': 'Уолтер Айзексон',
+  'Eckhart Tolle': 'Экхарт Толле',
+  'Neal Stephenson': 'Нил Стивенсон',
+  'Elizabeth Gilbert': 'Элизабет Гилберт',
+  'Rhonda Byrne': 'Ронда Берн',
+  'Alan Moore': 'Алан Мур',
+}
+
+// Русские описания (2.8, п. 5) — на карточке книги: из Википедии (со ссылкой) или машинный перевод аннотации.
+// В моках — несколько книг, текст краткий
+const ANNOTATIONS_RU = {
+  B006LSZECO: {
+    annotationRu:
+      'В день пятой годовщины свадьбы Эми Данн исчезает. Под подозрением оказывается её муж Ник: полиция находит следы борьбы, соседи вспоминают ссоры, а дневник Эми рассказывает о браке совсем не то, что говорит Ник.',
+    annotationSource: 'wikipedia',
+    annotationUrl: 'https://ru.wikipedia.org/wiki/Исчезнувшая_(роман)',
+  },
+  B00L9B7IKE: {
+    annotationRu:
+      'Рейчел каждый день ездит на одном и том же поезде и смотрит в окно на дом, где живёт «идеальная» пара. Однажды она видит там то, что меняет всё, — а потом женщина из этого дома пропадает.',
+    annotationSource: 'mt',
+    annotationUrl: null,
+  },
+  '0439784549': {
+    annotationRu:
+      'Шестая книга о Гарри Поттере. Волан-де-Морт набирает силу, а Дамблдор готовит Гарри к решающей схватке, открывая ему прошлое Тёмного Лорда. В руки Гарри попадает учебник с пометками таинственного Принца-полукровки.',
+    annotationSource: 'wikipedia',
+    annotationUrl: 'https://ru.wikipedia.org/wiki/Гарри_Поттер_и_Принц-полукровка',
+  },
+}
+
+// Серии (2.8, п. 3): в выборке нет поля серии — узнаём несколько известных по названию
+const SERIES = [
+  { re: /Harry Potter/, name: 'Гарри Поттер', nameEn: 'Harry Potter' },
+  { re: /Hunger Games|Mockingjay|Catching Fire/, name: 'Голодные игры', nameEn: 'The Hunger Games' },
+  { re: /Twilight Saga|^Twilight\b/, name: 'Сумерки', nameEn: 'The Twilight Saga' },
+  { re: /Divergent|Insurgent|Allegiant/, name: 'Дивергент', nameEn: 'Divergent' },
+  { re: /Outlander/, name: 'Чужестранка', nameEn: 'Outlander' },
+]
+const seriesOf = (book) => SERIES.find((s) => s.re.test(book.title)) ?? null
+
+// Свои русские и казахские книги (1.5): без оценок, описания — из русской Википедии, как на бэкенде (B8) —
+// в annotation и в annotationRu один и тот же русский текст. У казахских title — оригинал, titleRu — русское
+// название. Буквы ә ғ қ ң ө ұ ү һ і и длинное название — чтобы проверить заглушку обложки
+const WIKI = 'https://ru.wikipedia.org/wiki/'
+const local = ({ text, ...book }) => ({
+  year: null, section: null, subsection: null, cover: null, rating: null, ratingsCount: 0, titleRu: null, authorRu: null,
+  annotation: text, annotationRu: text, annotationSource: 'wikipedia', annotationUrl: null,
+  ...book,
+})
+const LOCAL_BOOKS = [
+  local({
+    id: 'ru-master', source: 'ru', title: 'Мастер и Маргарита', author: 'Михаил Булгаков', year: 1967,
+    text: 'Роман о визите дьявола в Москву 1930-х годов и о Мастере, написавшем роман о Понтии Пилате. Сатира на советский быт переплетается с евангельской историей и историей любви Мастера и Маргариты.',
+    annotationUrl: WIKI + 'Мастер_и_Маргарита',
+  }),
+  local({
+    id: 'ru-piknik', source: 'ru', title: 'Пикник на обочине', author: 'Аркадий и Борис Стругацкие', year: 1972,
+    text: 'После визита инопланетян на Земле остались Зоны — места, полные загадочных предметов и смертельных ловушек. Сталкер Рэдрик Шухарт нелегально ходит в Зону за находками, пока не решается дойти до Золотого шара, исполняющего желания.',
+    annotationUrl: WIKI + 'Пикник_на_обочине',
+  }),
+  local({
+    id: 'kz-abai', source: 'kz', title: 'Абай жолы', titleRu: 'Путь Абая', author: 'Мұхтар Әуезов', authorRu: 'Мухтар Ауэзов', year: 1956,
+    text: 'Роман-эпопея о жизни поэта и мыслителя Абая Кунанбаева — от детства до зрелых лет, на фоне жизни казахской степи XIX века.',
+    annotationUrl: WIKI + 'Путь_Абая',
+  }),
+  local({
+    id: 'kz-koshpendiler', source: 'kz', title: 'Көшпенділер: Алмас қылыш. Жанталас. Қаһар', titleRu: 'Кочевники', author: 'Ілияс Есенберлин', authorRu: 'Ильяс Есенберлин', year: 1976,
+    text: 'Историческая трилогия о Казахском ханстве — от его основания в XV веке до восстания Кенесары Касымова в XIX веке.',
+    annotationUrl: WIKI + 'Кочевники_(трилогия)',
+  }),
+  local({
+    id: 'kz-koja', source: 'kz', title: 'Менің атым Қожа', titleRu: 'Меня зовут Кожа', author: 'Бердібек Соқпақбаев', authorRu: 'Бердибек Сокпакбаев', year: 1957,
+    text: 'Повесть о школьнике-озорнике Кожа, который никак не может стать примерным, — одна из самых любимых детских книг в Казахстане.',
+    annotationUrl: WIKI + 'Меня_зовут_Кожа',
+  }),
+  local({
+    id: 'kz-ulpan', source: 'kz', title: 'Ұлпан', titleRu: 'Улпан её имя', author: 'Ғабит Мүсірепов', authorRu: 'Габит Мусрепов', year: 1974,
+    text: 'Роман о казахской женщине XIX века, которая сумела стать хозяйкой своей судьбы и уважаемой в степи.',
+    annotationUrl: WIKI + 'Улпан_её_имя',
+  }),
+]
+
 function loadData() {
   dataPromise ??= import('@shared/mock/books_sample.json').then(({ default: raw }) => {
-    const books = raw.books
+    const amazon = raw.books.map((b) => ({ ...b, source: 'amazon', titleRu: TITLES_RU[b.id] ?? null, authorRu: AUTHORS_RU[b.author] ?? null }))
+    const books = [...amazon, ...LOCAL_BOOKS]
     const byId = new Map(books.map((b) => [b.id, b]))
-    const meanRating = books.reduce((s, b) => s + b.rating, 0) / books.length
+    const meanRating = amazon.reduce((s, b) => s + b.rating, 0) / amazon.length
     return { raw, books, byId, meanRating }
   })
   return dataPromise
@@ -45,7 +198,16 @@ function writeState(state) {
   }
 }
 
-const publicUser = ({ id, email, name, createdAt, onboardingCompleted }) => ({ id, email, name, createdAt, onboardingCompleted })
+const publicUser = ({ id, email, name, createdAt, onboardingCompleted, readingLanguages = [] }) => ({
+  id,
+  email,
+  name,
+  createdAt,
+  onboardingCompleted,
+  readingLanguages,
+})
+const LANGUAGES = ['ru', 'kk', 'en']
+const cleanLanguages = (list) => LANGUAGES.filter((l) => list.includes(l))
 
 // Токен в моках — «mock:<email>»
 function currentAccount(state = readState()) {
@@ -71,7 +233,7 @@ export async function register({ email = '', password = '', name = '' }) {
   if (details.length) return fail(400, 'validation_error', 'Некорректные данные запроса', details)
   const state = readState()
   if (state.users[email]) return fail(409, 'email_taken', 'Этот email уже зарегистрирован')
-  const user = { id: Date.now(), email, name: name.trim(), createdAt: new Date().toISOString(), onboardingCompleted: false }
+  const user = { id: Date.now(), email, name: name.trim(), createdAt: new Date().toISOString(), onboardingCompleted: false, readingLanguages: [] }
   state.users[email] = { user, password, my: {}, topics: [], answers: [] }
   writeState(state)
   return delay({ token: `mock:${email}`, user: publicUser(user) })
@@ -124,7 +286,7 @@ function reasonFor(book, profile, { detailed = false } = {}) {
   if (profile.sections.includes(book.section)) {
     const section = sectionLabel(book.section)
     const text = detailed
-      ? `Из вашей темы «${section}», читатели оценивают её в ${book.rating.toFixed(1)}`
+      ? `Из вашей темы «${section}»${book.rating != null ? `, читатели оценивают её в ${book.rating.toFixed(1)}` : ''}`
       : `Ваша тема: ${section}`
     return { kind: 'topic', text }
   }
@@ -152,9 +314,9 @@ export async function getSections() {
   return delay(raw.sections.map((s) => ({ name: s.name, booksCount: s.books })))
 }
 
-export async function getBooks({ section, sort = 'popular', limit = 20, offset = 0 } = {}) {
+export async function getBooks({ section, source, sort = 'popular', limit = 20, offset = 0 } = {}) {
   const { books, meanRating } = await loadData()
-  const list = section ? books.filter((b) => b.section === section) : [...books]
+  const list = books.filter((b) => (!section || b.section === section) && (!source || b.source === source))
   list.sort(sort === 'rating' ? byWeighted(meanRating) : (a, b) => b.ratingsCount - a.ratingsCount)
   return delay({ items: list.slice(offset, offset + limit), total: list.length })
 }
@@ -163,11 +325,13 @@ export async function getBook(id) {
   const { byId } = await loadData()
   const book = byId.get(id)
   if (!book) return fail(404, 'book_not_found', `Книга ${id} не найдена`)
+  // у своих книг описание уже в данных (LOCAL_BOOKS), у книг Amazon — из ANNOTATIONS_RU, если есть
+  const full = book.source === 'amazon' ? { ...book, annotationRu: null, annotationSource: null, annotationUrl: null, ...ANNOTATIONS_RU[id] } : book
   const account = currentAccount()
-  if (!account) return delay({ ...book, recommendation: null, my: null })
+  if (!account) return delay({ ...full, recommendation: null, my: null })
   const m = account.my[id] ?? {}
   return delay({
-    ...book,
+    ...full,
     recommendation: m.rating ? null : reasonFor(book, profileOf(account, byId), { detailed: true }),
     my: { rating: m.rating ?? null, shelf: m.shelf ?? null, hidden: Boolean(m.hidden) },
   })
@@ -188,9 +352,13 @@ export async function getSimilarBooks(id, { limit = 12 } = {}) {
 export async function getRecommendations({ limit = 16 } = {}) {
   const { books, byId, meanRating } = await loadData()
   const account = currentAccount()
-  const popular = () => [...books].sort(byWeighted(meanRating))
+  const popular = () => books.filter((b) => b.source === 'amazon').sort(byWeighted(meanRating))
+  const localRows = ['ru', 'kz'].map((source) => ({
+    source,
+    items: books.filter((b) => b.source === source).map((book) => ({ book, reason: null })),
+  }))
   if (!account) {
-    return delay({ forYou: popular().slice(0, limit).map((book) => ({ book, reason: POPULAR_REASON })), becauseYouLiked: [] })
+    return delay({ forYou: popular().slice(0, limit).map((book) => ({ book, reason: POPULAR_REASON })), becauseYouLiked: [], series: [], local: localRows })
   }
 
   const profile = profileOf(account, byId)
@@ -211,7 +379,24 @@ export async function getRecommendations({ limit = 16 } = {}) {
       .slice(0, 12)
       .map((book) => ({ book, reason: { kind: 'similar', text: `Похожа на «${shortTitle(seed.title)}»`, seedId: seed.id } })),
   }))
-  return delay({ forYou, becauseYouLiked })
+  // «Другие книги серии»: понравились 2+ книги одной серии — остальные её книги отдельным рядом
+  const ru = !account.user.readingLanguages?.length || account.user.readingLanguages.includes('ru')
+  const groups = new Map()
+  for (const b of profile.liked) {
+    const s = seriesOf(b)
+    if (s) groups.set(s, [...(groups.get(s) ?? []), b])
+  }
+  const series = [...groups]
+    .filter(([, seeds]) => seeds.length >= 2)
+    .map(([s, seeds]) => ({
+      name: ru ? s.name : s.nameEn,
+      seeds,
+      items: books
+        .filter((b) => seriesOf(b) === s && !skip(b))
+        .map((book) => ({ book, reason: { kind: 'series', text: `Из серии «${ru ? s.name : s.nameEn}»` } })),
+    }))
+    .filter((r) => r.items.length)
+  return delay({ forYou, becauseYouLiked, series, local: localRows })
 }
 
 // ——— Поиск ———
@@ -224,14 +409,14 @@ export async function searchBooks({ q = '', section, year, rating, hideRead, lim
   const my = currentAccount()?.my ?? {}
   const list = books.filter(
     (b) =>
-      (b.title.toLowerCase().includes(query) || b.author?.toLowerCase().includes(query)) &&
+      [b.title, b.titleRu, b.author, b.authorRu].some((x) => x?.toLowerCase().includes(query)) &&
       (!section || b.section === section) &&
       (!year || (b.year >= from && b.year <= to)) &&
       (!rating || b.rating >= Number(rating)) &&
       (!hideRead || my[b.id]?.shelf !== 'read'),
   )
   list.sort((a, b) => Number(b.title.toLowerCase().startsWith(query)) - Number(a.title.toLowerCase().startsWith(query)) || b.ratingsCount - a.ratingsCount)
-  return delay({ items: list.slice(offset, offset + limit), total: list.length, fuzzy: false })
+  return delay({ items: list.slice(offset, offset + limit), total: list.length, fuzzy: false, mode: 'keyword' })
 }
 
 export async function suggestBooks(q) {
@@ -239,35 +424,39 @@ export async function suggestBooks(q) {
   const query = q.trim().toLowerCase()
   return delay(
     books
-      .filter((b) => b.title.toLowerCase().includes(query) || b.author?.toLowerCase().includes(query))
+      .filter((b) => [b.title, b.titleRu, b.author, b.authorRu].some((s) => s?.toLowerCase().includes(query)))
       .sort((a, b) => Number(b.title.toLowerCase().startsWith(query)) - Number(a.title.toLowerCase().startsWith(query)) || b.ratingsCount - a.ratingsCount)
       .slice(0, 8)
-      .map(({ id, title, author, year, cover }) => ({ id, title, author, year, cover })),
+      .map(({ id, title, titleRu, author, authorRu, year, cover }) => ({ id, title, titleRu, author, authorRu, year, cover })),
   )
 }
 
 // ——— Онбординг (2.3): до 3 раундов по 12 книг, конец после 5 «Нравится» ———
 
 export async function getOnboardingRound() {
-  const { books, raw } = await loadData()
+  const { books, byId, raw } = await loadData()
   const account = currentAccount()
   if (!account) return fail(401, 'unauthorized', 'Нужно войти в аккаунт')
-  const round = account.answers.length ? Math.max(...account.answers.map((a) => a.round)) + 1 : 1
+  // книги, названные через поиск («Назовите любимые книги»), раунд не засчитывают
+  const answered = account.answers.filter((a) => a.source !== 'search')
+  const round = answered.length ? Math.max(...answered.map((a) => a.round)) + 1 : 1
   const likes = account.answers.filter((a) => a.answer === 'like').length
   if (round > 3 || likes >= 5) return delay({ round, done: true, items: [] })
 
   const shown = new Set(account.answers.map((a) => a.bookId))
-  const sections = account.topics.length ? account.topics : raw.sections.slice(0, 8).map((s) => s.name)
+  const likedSections = [...new Set(profileOf(account, byId).liked.map((b) => b.section))]
+  const sections = account.topics.length ? account.topics : likedSections.length ? likedSections : raw.sections.slice(0, 8).map((s) => s.name)
   const queues = sections.map((s) => books.filter((b) => b.section === s && !shown.has(b.id)).sort((a, b) => b.ratingsCount - a.ratingsCount))
   const items = roundRobin(queues, 12).map((book) => ({ book, reason: { kind: 'topic', text: `Раздел «${sectionLabel(book.section)}»` } }))
   return delay({ round, done: items.length === 0, items })
 }
 
-export async function sendOnboardingAnswers({ topics, round = 1, answers = [], completed }) {
+export async function sendOnboardingAnswers({ topics, readingLanguages, round = 1, answers = [], completed }) {
   const { byId } = await loadData()
   if (answers.some((a) => !byId.has(a.bookId))) return fail(404, 'book_not_found', 'Книга не найдена')
   const account = updateAccount((acc) => {
     if (topics) acc.topics = topics.filter((t) => t.kind === 'section').map((t) => t.value)
+    if (readingLanguages) acc.user.readingLanguages = cleanLanguages(readingLanguages)
     const ids = new Set(answers.map((a) => a.bookId))
     acc.answers = acc.answers.filter((a) => !ids.has(a.bookId)).concat(answers.map((a) => ({ ...a, round })))
     if (completed !== undefined) acc.user.onboardingCompleted = completed
@@ -340,6 +529,8 @@ export async function getHidden({ limit = 20, offset = 0 } = {}) {
   return delay({ items: list.slice(offset, offset + limit).map(({ book, m }) => ({ book, hiddenAt: m.hiddenAt })), total: list.length })
 }
 
+const topicLabel = (kind, value) => (kind === 'section' ? sectionLabel(value) : kind === 'subsection' ? subsectionLabel(value) : value)
+
 // Как на сервере: темы из онбординга + выведенные из понравившихся книг; weight — сколько книг в теме
 async function tasteOf(account) {
   const { byId } = await loadData()
@@ -349,7 +540,7 @@ async function tasteOf(account) {
   const add = (kind, value, source, weight = 0) => {
     if (!value || isRejected(kind, value)) return
     const k = `${kind}:${value}`
-    const item = items.get(k) ?? { kind, value, label: kind === 'section' ? sectionLabel(value) : value, source, weight: 0 }
+    const item = items.get(k) ?? { kind, value, label: topicLabel(kind, value), source, weight: 0 }
     item.weight += weight
     items.set(k, item)
   }
@@ -362,7 +553,7 @@ async function tasteOf(account) {
   const list = [...items.values()]
     .filter((i) => i.source === 'onboarding' || i.kind === 'section' || i.weight >= 2)
     .sort((a, b) => (a.source === 'onboarding' ? -1 : 0) - (b.source === 'onboarding' ? -1 : 0) || b.weight - a.weight)
-  return { items: list, rejected: rejected.map((r) => ({ ...r, label: r.kind === 'section' ? sectionLabel(r.value) : r.value })) }
+  return { items: list, rejected: rejected.map((r) => ({ ...r, label: topicLabel(r.kind, r.value) })) }
 }
 
 export async function getTaste() {
@@ -423,7 +614,7 @@ export async function setGoal({ target, year = new Date().getFullYear() }) {
   return { year, target, done: readThisYear }
 }
 
-export async function updateProfile({ name, email, password, currentPassword }) {
+export async function updateProfile({ name, email, password, currentPassword, readingLanguages }) {
   const state = readState()
   const account = currentAccount(state)
   if (!account) return fail(401, 'unauthorized', 'Нужно войти в аккаунт')
@@ -437,6 +628,7 @@ export async function updateProfile({ name, email, password, currentPassword }) 
   if ((emailChanged || password) && currentPassword !== account.password) return fail(403, 'wrong_password', 'Неверный текущий пароль')
   if (emailChanged && state.users[email]) return fail(409, 'email_taken', 'Этот email уже зарегистрирован')
   if (name !== undefined) account.user.name = name.trim()
+  if (readingLanguages) account.user.readingLanguages = cleanLanguages(readingLanguages)
   if (password) account.password = password
   if (emailChanged) {
     delete state.users[account.user.email]

@@ -9,10 +9,18 @@ import { Button } from '../components/Button.jsx'
 import { Chip, ChipSkeleton } from '../components/Chip.jsx'
 import { SkeletonLine } from '../components/Skeleton.jsx'
 import { shortTitle } from '../lib/format.js'
+import { bookNames } from '../lib/bookNames.js'
 import { sectionLabel } from '../lib/sections.js'
+import { useReader } from '../lib/useBookNames.js'
 
 // столько рядов «Потому что вам понравилась…» держим местом, пока грузятся рекомендации
 const SEED_SHELVES = 2
+
+// Свои русские и казахские книги (1.5) — отдельными рядами, чтобы их было видно среди англоязычных
+const LOCAL_SHELVES = {
+  ru: { title: 'Русская литература', subtitle: 'Книги русских писателей в оригинале — описания из Википедии, оценок пока нет' },
+  kz: { title: 'Казахская литература', subtitle: 'Книги казахских писателей — на казахском и в переводах на русский' },
+}
 
 function greeting(hour = new Date().getHours()) {
   if (hour < 5) return 'Доброй ночи'
@@ -100,6 +108,7 @@ function OnboardingBanner() {
 export function HomePage() {
   const { user } = useAuth()
   const recs = useRecommendations()
+  const reader = useReader()
   // раздел для «Популярное в …» — тема первой книги «Для вас», подобранной по теме
   const preferred = recs.data?.forYou.find((r) => r.reason?.kind !== 'popular')?.book.section
 
@@ -139,6 +148,17 @@ export function HomePage() {
         />
       )}
 
+      {/* «Другие книги серии» (2.8, п. 3): понравились 2+ книги одной серии — сразу под «Для вас», это самый сильный сигнал */}
+      {recs.data?.series?.map(({ name, items }) => (
+        <BookShelf
+          key={name}
+          title="Другие книги серии"
+          subtitle={`Вам понравились книги серии «${name}»`}
+          items={items.map((it) => it.book)}
+          onOpen={(book) => trackRecClick(book, items.find((it) => it.book.id === book.id)?.reason, 'series')}
+        />
+      ))}
+
       {user && recs.isPending
         ? Array.from({ length: SEED_SHELVES }, (_, i) => (
             <BookShelf
@@ -151,12 +171,24 @@ export function HomePage() {
         : recs.data?.becauseYouLiked.map(({ seed, items }) => (
             <BookShelf
               key={seed.id}
-              title={`Потому что вам понравилась «${shortTitle(seed.title)}»`}
-              subtitle={seed.author}
+              title={`Потому что вам понравилась «${shortTitle(bookNames(seed, reader).title)}»`}
+              subtitle={bookNames(seed, reader).author}
               items={items.map((it) => it.book)}
               onOpen={(book) => trackRecClick(book, items.find((it) => it.book.id === book.id)?.reason, 'because_you_liked')}
             />
           ))}
+
+      {recs.data?.local?.map(({ source, items }) =>
+        LOCAL_SHELVES[source] && items.length ? (
+          <BookShelf
+            key={source}
+            title={LOCAL_SHELVES[source].title}
+            subtitle={LOCAL_SHELVES[source].subtitle}
+            items={items.map((it) => it.book)}
+            onOpen={(book) => trackRecClick(book, items.find((it) => it.book.id === book.id)?.reason, `local_${source}`)}
+          />
+        ) : null,
+      )}
 
       <PopularIn preferred={preferred} />
     </div>

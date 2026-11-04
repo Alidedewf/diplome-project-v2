@@ -80,7 +80,11 @@ export function SearchPage() {
   const pages = search.data?.pages ?? []
   const items = pages.flatMap((p) => p.items)
   const total = pages[0]?.total ?? 0
-  const fuzzy = pages[0]?.fuzzy
+  // Совпадений по написанию мало (fuzzy): при обычном поиске честно говорим, что показаны похожие написания;
+  // при гибридном так звучит странно (особенно для запроса по-русски) — там добирает смысловой поиск.
+  // mode — каким поиском найдено на самом деле; без него (моки) — обычный
+  const { fuzzy, mode = 'keyword' } = pages[0] ?? {}
+  const note = !fuzzy ? '' : mode === 'keyword' ? ' · точных совпадений мало, показываем похожие по написанию' : mode === 'hybrid' ? ' · ищем и по смыслу' : ''
 
   return (
     <div className="flex flex-col gap-6">
@@ -90,7 +94,7 @@ export function SearchPage() {
         </h1>
         <p className="text-sm text-muted" aria-live="polite">
           {search.isPending ? 'Ищем…' : search.error ? '' : `Найдено ${formatCount(total, BOOKS)}`}
-          {fuzzy && ' · точных совпадений мало, показываем похожие по написанию'}
+          {note}
         </p>
       </header>
 

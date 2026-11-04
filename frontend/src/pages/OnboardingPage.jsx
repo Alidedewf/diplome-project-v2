@@ -3,17 +3,20 @@ import { Check, CircleAlert, CircleSlash, Heart, ThumbsDown, X } from 'lucide-re
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { sendOnboardingAnswers } from '../api/index.js'
-import { useOnboardingRound, useSections, useTaste } from '../api/queries.js'
+import { useOnboardingRound, useRefreshAfterLanguageChange, useSections, useTaste } from '../api/queries.js'
 import { useAuth } from '../auth/context.js'
 import { BookAutocomplete } from '../components/BookAutocomplete.jsx'
 import { BookCover } from '../components/BookCover.jsx'
 import { Button } from '../components/Button.jsx'
+import { LanguagePicker } from '../components/LanguagePicker.jsx'
 import { Spinner } from '../components/Spinner.jsx'
 import { TextField } from '../components/TextField.jsx'
 import { cn, formatCount } from '../lib/format.js'
+import { bookNames } from '../lib/bookNames.js'
 import { sectionLabel } from '../lib/sections.js'
+import { useBookNames, useReader } from '../lib/useBookNames.js'
 
-// Онбординг (2.3, 3.4): шаг 1 — темы и описание своими словами, шаг 2 — до 3 раундов книг.
+// Онбординг (2.3, 3.4): шаг 1 — темы, язык чтения (2.8) и описание своими словами, шаг 2 — до 3 раундов книг.
 // Раунды подбирает сервер (GET /onboarding/next-round) по прежним ответам; «Пропустить» доступно всегда.
 const MAX_ROUNDS = 3
 const BOOKS = { one: 'книга', few: 'книги', many: 'книг' }
@@ -65,7 +68,51 @@ function Footer({ note, children }) {
   )
 }
 
+// Книги, найденные пользователем через поиск: «Назовите любимые книги» на шаге тем и «Добавить книгу,
+// которую читали» в раундах. Уходят как «Нравится» с source: 'search'. Чипы — с обложкой, чтобы отличить издания
+function PickedBooks({ title, hint, books, onChange, dashed = false, className }) {
+  const reader = useReader()
+  const add = (book) => onChange(books.some((b) => b.id === book.id) ? books : [...books, book])
+  return (
+    <section className={cn('flex flex-col gap-3 rounded-xl border p-4', dashed ? 'border-dashed border-line' : 'border-line bg-surface', className)}>
+      <div>
+        <h2 className="text-lg font-semibold">{title}</h2>
+        <p className="text-sm text-muted">{hint}</p>
+      </div>
+      <BookAutocomplete label={title} placeholder="Название или автор" clearOnSelect onSelect={add} className="max-w-md" />
+      {books.length > 0 && (
+        <ul className="flex flex-wrap gap-2">
+          {books.map((b) => {
+            const names = bookNames(b, reader)
+            return (
+              <li key={b.id} className="flex items-center gap-2 rounded-full border border-accent bg-accent-soft py-1 pr-1.5 pl-1 text-sm">
+                {b.cover ? (
+                  <img src={b.cover} alt="" width={20} height={30} className="h-[30px] w-5 shrink-0 rounded-[2px] object-cover" />
+                ) : (
+                  <Heart size={13} className="ml-2 text-accent-text" aria-hidden />
+                )}
+                <span lang={names.titleLang} className="max-w-56 truncate">
+                  {names.title}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Убрать «${names.title}»`}
+                  onClick={() => onChange(books.filter((x) => x.id !== b.id))}
+                  className="rounded-full p-0.5 text-muted hover:text-ink"
+                >
+                  <X size={14} />
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 function TopicsStep({ onNext, onSkip, busy, error }) {
+  const { user } = useAuth()
   const sections = useSections()
   // Вернулся в онбординг — темы, выбранные раньше, уже отмечены (пока пользователь сам их не менял)
   const taste = useTaste()
@@ -73,16 +120,38 @@ function TopicsStep({ onNext, onSkip, busy, error }) {
   const [changed, setSelected] = useState(null)
   const selected = changed ?? saved
   const [description, setDescription] = useState('')
+  const [favorites, setFavorites] = useState([])
+  // Язык чтения необязателен: не выбрали — книги показываем как читающему по-русски (5.6)
+  const [languages, setLanguages] = useState(() => user?.readingLanguages ?? [])
   const toggle = (name) => setSelected(selected.includes(name) ? selected.filter((x) => x !== name) : [...selected, name])
   const loading = sections.isPending || taste.isPending
+  // Жанр не обязателен (2.8): хватит описания или любимых книг — Поттер, например, у Amazon в «Детских книгах»
+  const ready = selected.length > 0 || description.trim().length > 0 || favorites.length > 0
+  const args = () => [selected, description.trim(), languages, favorites]
+  const note = [
+    selected.length > 0 && `тем: ${selected.length}`,
+    favorites.length > 0 && `книг: ${favorites.length}`,
+    description.trim() && 'есть описание',
+  ].filter(Boolean)
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-3xl font-semibold sm:text-4xl">Что вы любите читать?</h1>
-        <p className="mt-2 text-muted">Выберите хотя бы одну тему — по ним подберём первые книги.</p>
+        <p className="mt-2 text-muted">Назовите любимые книги, выберите темы или опишите словами — по этому подберём первые книги.</p>
       </div>
 
+      {/* язык — до тем: одна строка, а под 31 темой её не заметить */}
+      <LanguagePicker value={languages} onChange={setLanguages} />
+
+      <PickedBooks
+        title="Назовите любимые книги"
+        hint="Найдите несколько книг, которые вам понравились, — так мы точнее всего поймём ваш вкус."
+        books={favorites}
+        onChange={setFavorites}
+      />
+
+      <h2 className="-mb-3 text-lg font-semibold">Темы</h2>
       {sections.error ? (
         <ErrorNote error={sections.error} />
       ) : (
@@ -119,6 +188,7 @@ function TopicsStep({ onNext, onSkip, busy, error }) {
               })}
         </div>
       )}
+      <p className="-mt-3 text-sm text-muted">Не нашли свой жанр? Опишите словами или назовите книги.</p>
 
       <TextField
         multiline
@@ -131,11 +201,11 @@ function TopicsStep({ onNext, onSkip, busy, error }) {
 
       <ErrorNote error={error} />
 
-      <Footer note={selected.length ? `Выбрано тем: ${selected.length}` : 'Выберите хотя бы одну тему'}>
-        <Button variant="ghost" onClick={() => onSkip(selected, description.trim())} disabled={busy}>
+      <Footer note={note.length ? `Выбрано: ${note.join(', ')}` : 'Выберите темы, книги или опишите словами'}>
+        <Button variant="ghost" onClick={() => onSkip(...args())} disabled={busy}>
           Пропустить
         </Button>
-        <Button variant="primary" onClick={() => onNext(selected, description.trim())} disabled={busy || !selected.length}>
+        <Button variant="primary" onClick={() => onNext(...args())} disabled={busy || !ready}>
           Дальше
         </Button>
       </Footer>
@@ -144,17 +214,25 @@ function TopicsStep({ onNext, onSkip, busy, error }) {
 }
 
 function BookQuestion({ book, answer, onAnswer }) {
+  const names = useBookNames(book)
   return (
     <li className="flex gap-3 rounded-xl border border-line bg-surface p-3">
       <BookCover book={book} className="w-16 shrink-0 self-start sm:w-20" />
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="min-w-0">
-          <p lang="en" className="line-clamp-2 font-serif leading-snug font-semibold">
-            {book.title}
+          <p lang={names.titleLang} className="line-clamp-2 font-serif leading-snug font-semibold">
+            {names.title}
           </p>
-          <p className="line-clamp-1 text-sm text-muted">{book.author}</p>
+          {names.originalTitle && (
+            <p lang={names.originalLang} className="line-clamp-1 text-xs text-muted">
+              {names.originalTitle}
+            </p>
+          )}
+          <p lang={names.authorLang} className="line-clamp-1 text-sm text-muted">
+            {names.author}
+          </p>
         </div>
-        <div className="mt-auto flex flex-wrap gap-1.5" role="radiogroup" aria-label={`Ответ про «${book.title}»`}>
+        <div className="mt-auto flex flex-wrap gap-1.5" role="radiogroup" aria-label={`Ответ про «${names.title}»`}>
           {ANSWERS.map(({ id, label, icon: Icon, selected }) => (
             <button
               key={id}
@@ -217,39 +295,13 @@ function BooksStep({ round, onNext, onSkip, busy, error }) {
         ))}
       </ul>
 
-      <section className="flex flex-col gap-3 rounded-xl border border-dashed border-line p-4">
-        <div>
-          <h2 className="text-lg font-semibold">Добавить книгу, которую читали</h2>
-          <p className="text-sm text-muted">Найдите книгу, которая вам понравилась, — она тоже попадёт в профиль.</p>
-        </div>
-        <BookAutocomplete
-          label="Поиск книги, которую вы читали"
-          placeholder="Название или автор"
-          clearOnSelect
-          onSelect={(book) => setAdded((list) => (list.some((b) => b.id === book.id) ? list : [...list, book]))}
-          className="max-w-md"
-        />
-        {added.length > 0 && (
-          <ul className="flex flex-wrap gap-2">
-            {added.map((b) => (
-              <li key={b.id} className="flex items-center gap-2 rounded-full border border-accent bg-accent-soft py-1 pr-1.5 pl-3 text-sm">
-                <Heart size={13} className="text-accent-text" aria-hidden />
-                <span lang="en" className="max-w-56 truncate">
-                  {b.title}
-                </span>
-                <button
-                  type="button"
-                  aria-label={`Убрать «${b.title}»`}
-                  onClick={() => setAdded((list) => list.filter((x) => x.id !== b.id))}
-                  className="rounded-full p-0.5 text-muted hover:text-ink"
-                >
-                  <X size={14} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <PickedBooks
+        title="Добавить книгу, которую читали"
+        hint="Найдите книгу, которая вам понравилась, — она тоже попадёт в профиль."
+        books={added}
+        onChange={setAdded}
+        dashed
+      />
 
       <ErrorNote error={error} />
 
@@ -266,9 +318,10 @@ function BooksStep({ round, onNext, onSkip, busy, error }) {
 }
 
 export function OnboardingPage() {
-  const { updateUser } = useAuth()
+  const { user, updateUser } = useAuth()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const refreshForLanguage = useRefreshAfterLanguageChange()
   const [chosenStep, setStep] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -313,14 +366,26 @@ export function OnboardingPage() {
     }
   }
 
-  // description — «Опишите своими словами»: сервер хранит одно описание на сессию онбординга для смыслового подбора
-  const topicsBody = (sections, description) => ({
-    topics: sections.map((value) => ({ kind: 'section', value })),
+  // description — «Опишите своими словами»: сервер хранит одно описание на сессию онбординга для смыслового подбора.
+  // readingLanguages — язык чтения (2.8); сервер возвращает пользователя уже с ним
+  // favorites — «Назовите любимые книги»: «Нравится» с source: 'search', как добавленные в раундах
+  const topicsBody = (sections, description, languages, favorites = []) => ({
+    topics: sections.length ? sections.map((value) => ({ kind: 'section', value })) : undefined,
     description: description || undefined,
+    readingLanguages: languages,
+    round: 1,
+    answers: favorites.map((b) => ({ bookId: b.id, answer: 'like', source: 'search' })),
   })
+  const sendTopics = async (sections, description, languages, favorites) => {
+    const changed = languagesChanged(languages)
+    const { user: next } = await send(topicsBody(sections, description, languages, favorites))
+    if (next) updateUser(next)
+    if (changed) refreshForLanguage()
+  }
+  const languagesChanged = (languages) => [...languages].sort().join() !== [...(user?.readingLanguages ?? [])].sort().join()
 
-  const onTopics = async (sections, description) => {
-    await send(topicsBody(sections, description))
+  const onTopics = async (...args) => {
+    await sendTopics(...args)
     await round.refetch()
     setStep('books')
   }
@@ -351,7 +416,13 @@ export function OnboardingPage() {
       ) : step === 'topics' ? (
         <TopicsStep
           onNext={safe(onTopics)}
-          onSkip={safe((sections, description) => skip(sections.length ? topicsBody(sections, description) : null))}
+          onSkip={safe(async (sections, description, languages, favorites) => {
+            // при пропуске сохраняем то, что успели выбрать: темы, книги, описание, язык
+            if (sections.length || favorites.length || description || languagesChanged(languages)) {
+              await sendTopics(sections, description, languages, favorites)
+            }
+            await skip(null)
+          })}
           busy={busy || round.isFetching}
           error={error}
         />
