@@ -5,6 +5,7 @@ description = "ML-часть дипломного проекта: рекомен
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "catboost>=1.2.10",
+    "fastapi>=0.162.0",
     "huggingface-hub>=2.4.0",
     "implicit>=0.7.3",
     "ipykernel>=7.4.0",
@@ -18,8 +19,10 @@ dependencies = [
     "scikit-learn>=1.9.1",
     "seaborn>=0.13.2",
     "sentence-transformers>=6.2.0",
+    "sentencepiece>=0.2.2",
     "torch>=2.11.0",
     "tqdm>=4.70.1",
+    "uvicorn[standard]>=0.54.0",
 ]
 
 [tool.uv]
