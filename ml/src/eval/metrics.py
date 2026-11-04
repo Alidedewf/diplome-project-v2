@@ -37,16 +37,18 @@ def _hits(train: pd.DataFrame, part: pd.DataFrame, users: np.ndarray) -> dict[st
     return {"все": hits, "старые": hits[old], "новые": hits[~old]}
 
 
-def evaluate(reco: pd.DataFrame, train: pd.DataFrame, part: pd.DataFrame, users: np.ndarray, k: int = K):
+def evaluate(reco: pd.DataFrame, train: pd.DataFrame, part: pd.DataFrame, users: np.ndarray, k: int = K,
+             catalog=None):
     """Метрики @k по разрезам «все / старые / новые».
 
     reco — рекомендации RecTools (user_id, item_id, rank) для users.
+    catalog — из чего модель выбирает (для Coverage); по умолчанию книги обучения.
     Возвращает (таблица метрик, NDCG по пользователям для каждого разреза — для bootstrap).
     """
     reco = reco.assign(**{Columns.User: reco[Columns.User].astype(str), Columns.Item: reco[Columns.Item].astype(str)})
     reco = reco[reco[Columns.Rank] <= k]
     prev = pd.DataFrame({Columns.User: train[Columns.User].astype(str), Columns.Item: train[Columns.Item].astype(str)})
-    catalog = prev[Columns.Item].unique()
+    catalog = prev[Columns.Item].unique() if catalog is None else np.asarray(catalog)
 
     rows, per_user = [], {}
     for name, hits in _hits(train, part, users).items():

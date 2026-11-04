@@ -55,6 +55,47 @@ def time_split(ratings: pd.DataFrame, val_start=VAL_START, test_start=TEST_START
     return ratings[dt < val_start], ratings[(dt >= val_start) & (dt < test_start)], ratings[dt >= test_start]
 
 
+def first_seen(ratings: pd.DataFrame) -> pd.Series:
+    """Дата первой оценки книги по всем данным (все пользователи), индекс — id книги строкой.
+
+    Каталог books_clean собран из книг, у которых есть отзывы, в том числе более поздние, чем дата разбиения. Книга,
+    впервые оценённая после даты, «знает», что её оценят, — content-модели, выбирающие из всего каталога, получают
+    утечку (решения.md 3.2, E1–E3). Честный каталог на дату — книги с first_seen < даты.
+    """
+    first = ratings.groupby(Columns.Item, observed=True)[Columns.Datetime].min()
+    first.index = first.index.astype(str)
+    return first
+
+
+def known_at(item_ids, first: pd.Series, cutoff: pd.Timestamp) -> np.ndarray:
+    """Маска книг, известных на дату cutoff (первая оценка раньше неё)."""
+    return (first.reindex(np.asarray(item_ids, dtype=str)) < cutoff).to_numpy()
+
+
+MIN_TRAIN_RATINGS = 5
+
+
+def rare_items(train: pd.DataFrame, min_ratings: int = MIN_TRAIN_RATINGS) -> pd.Index:
+    """Книги с 1…min_ratings−1 оценками в обучении — их нельзя рекомендовать ни одной модели.
+
+    subsample_users оставляет книги с ≥ 5 оценками в подвыборке за всё время, поэтому книга с 1–4 оценками в обучении
+    попала в данные только благодаря будущим оценкам (попадание в 2021 году — у 89–95% книг с 1–2 оценками против 11%
+    у книг с 5–9). Книги без оценок в обучении правило не трогает: content выбирает их из всего каталога, а не из
+    подвыборки. Решения.md 3.1 (ограничения), E1–E3.
+    """
+    n = train[Columns.Item].astype(str).value_counts()
+    return n.index[n < min_ratings]
+
+
+def drop_rare(reco: pd.DataFrame, train: pd.DataFrame, k: int | None = None,
+              min_ratings: int = MIN_TRAIN_RATINGS) -> pd.DataFrame:
+    """Рекомендации без книг rare_items(train): места пересчитываются, k — оставить первые k."""
+    rare = set(rare_items(train, min_ratings))
+    out = reco[~reco[Columns.Item].astype(str).isin(rare)].copy()
+    out[Columns.Rank] = out.groupby(Columns.User, sort=False).cumcount() + 1
+    return out if k is None else out[out[Columns.Rank] <= k]
+
+
 def to_dataset(train: pd.DataFrame, weighted: bool = True) -> Dataset:
     """Dataset RecTools из обучающих оценок. weighted=False — все оценки с весом 1."""
     weight = train["rating"].map(RATING_WEIGHTS).astype("float32") if weighted else 1.0
