@@ -238,4 +238,12 @@ export function useSetGoal() {
 }
 
 export const useUpdateProfile = () => useMutation({ mutationFn: updateProfile })
+
+// Сменился язык чтения (2.8): сервер иначе упорядочивает «популярное» и пишет объяснения рекомендаций
+// (русским названием), а ключи этих запросов язык не содержат — перечитываем их
+const LANGUAGE_DEPENDENT = new Set(['books', 'book', 'recommendations', 'search', 'suggest'])
+export function useRefreshAfterLanguageChange() {
+  const queryClient = useQueryClient()
+  return () => queryClient.invalidateQueries({ predicate: (q) => LANGUAGE_DEPENDENT.has(q.queryKey[0]) })
+}
 export const useDeleteAccount = () => useMutation({ mutationFn: deleteAccount })

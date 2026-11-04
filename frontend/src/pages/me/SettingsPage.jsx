@@ -2,9 +2,10 @@ import { CircleAlert, TriangleAlert } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { dropEvents } from '../../api/events.js'
-import { useDeleteAccount, useUpdateProfile } from '../../api/queries.js'
+import { useDeleteAccount, useRefreshAfterLanguageChange, useUpdateProfile } from '../../api/queries.js'
 import { useAuth } from '../../auth/context.js'
 import { Button } from '../../components/Button.jsx'
+import { LANGUAGES_HINT, LanguagePicker } from '../../components/LanguagePicker.jsx'
 import { TextField } from '../../components/TextField.jsx'
 import { useToast } from '../../components/toast-context.js'
 import { PageHeader } from './parts.jsx'
@@ -87,6 +88,44 @@ function ProfileForm() {
       <FormError error={save.error} fields={errors} />
       <div>
         <Button type="submit" variant="primary" disabled={!changed || save.isPending || (emailChanged && !currentPassword)}>
+          {save.isPending ? 'Сохраняем…' : 'Сохранить'}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+// Язык чтения (2.8): сохраняется сразу на сервере, карточки книг перестраиваются (5.6)
+function LanguagesForm() {
+  const { user, updateUser } = useAuth()
+  const toast = useToast()
+  const save = useUpdateProfile()
+  const refresh = useRefreshAfterLanguageChange()
+  const saved = user.readingLanguages ?? []
+  const [languages, setLanguages] = useState(saved)
+  const changed = [...languages].sort().join() !== [...saved].sort().join()
+
+  const submit = (e) => {
+    e.preventDefault()
+    save.mutate(
+      { readingLanguages: languages },
+      {
+        onSuccess: (next) => {
+          updateUser(next)
+          refresh()
+          setLanguages(next.readingLanguages ?? [])
+          toast('Язык чтения сохранён')
+        },
+      },
+    )
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-4">
+      <LanguagePicker bare value={languages} onChange={setLanguages} />
+      <FormError error={save.error} fields={{}} />
+      <div>
+        <Button type="submit" variant="primary" disabled={!changed || save.isPending}>
           {save.isPending ? 'Сохраняем…' : 'Сохранить'}
         </Button>
       </div>
@@ -218,6 +257,9 @@ export function SettingsPage() {
       <div className="flex flex-col gap-4">
         <Section title="Профиль">
           <ProfileForm />
+        </Section>
+        <Section title="Язык чтения" description={LANGUAGES_HINT}>
+          <LanguagesForm />
         </Section>
         <Section title="Пароль">
           <PasswordForm />

@@ -2,14 +2,16 @@ import { EyeOff, Undo2 } from 'lucide-react'
 import { useBookAction, useMyHidden } from '../../api/queries.js'
 import { Button } from '../../components/Button.jsx'
 import { useToast } from '../../components/toast-context.js'
+import { useBookNames } from '../../lib/useBookNames.js'
 import { BookList, EmptyState, MyBookCard, PageHeader } from './parts.jsx'
 
 function HiddenBook({ item }) {
+  const { title } = useBookNames(item.book)
   const toast = useToast()
   const action = useBookAction(item.book.id, { onError: (message) => toast(`Не удалось вернуть: ${message}`) })
   return (
     <MyBookCard book={item.book}>
-      <Button size="sm" onClick={() => action.mutate({ kind: 'hidden', value: false })} aria-label={`Вернуть «${item.book.title}»`}>
+      <Button size="sm" onClick={() => action.mutate({ kind: 'hidden', value: false })} aria-label={`Вернуть «${title}»`}>
         <Undo2 size={15} aria-hidden /> Вернуть
       </Button>
     </MyBookCard>

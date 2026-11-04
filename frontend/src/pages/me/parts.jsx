@@ -3,6 +3,7 @@ import { BookCover } from '../../components/BookCover.jsx'
 import { Button } from '../../components/Button.jsx'
 import { SkeletonLine } from '../../components/Skeleton.jsx'
 import { Spinner } from '../../components/Spinner.jsx'
+import { useBookNames } from '../../lib/useBookNames.js'
 
 // Общие части экранов кабинета
 
@@ -22,6 +23,7 @@ const LIST = 'grid grid-cols-1 gap-3 lg:grid-cols-2'
 
 // Книга в списке кабинета: обложка, название, автор; children — действия под ними
 export function MyBookCard({ book, meta, children }) {
+  const names = useBookNames(book)
   return (
     <li className="flex gap-3 rounded-xl border border-line bg-surface p-3 sm:gap-4">
       <Link to={`/book/${book.id}`} className="w-16 shrink-0 self-start sm:w-20" tabIndex={-1} aria-hidden>
@@ -31,12 +33,19 @@ export function MyBookCard({ book, meta, children }) {
         <div className="min-w-0">
           <Link
             to={`/book/${book.id}`}
-            lang="en"
+            lang={names.titleLang}
             className="line-clamp-2 font-serif leading-snug font-semibold hover:text-accent-text"
           >
-            {book.title}
+            {names.title}
           </Link>
-          <p className="line-clamp-1 text-sm text-muted">{book.author ?? 'Автор не указан'}</p>
+          {names.originalTitle && (
+            <p lang={names.originalLang} className="line-clamp-1 text-xs text-muted">
+              {names.originalTitle}
+            </p>
+          )}
+          <p lang={names.author ? names.authorLang : undefined} className="line-clamp-1 text-sm text-muted">
+            {names.author ?? 'Автор не указан'}
+          </p>
           {meta}
         </div>
         <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1.5">{children}</div>

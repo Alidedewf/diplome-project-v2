@@ -6,6 +6,7 @@ import { Button } from '../../components/Button.jsx'
 import { RatingStars } from '../../components/RatingStars.jsx'
 import { useToast } from '../../components/toast-context.js'
 import { cn } from '../../lib/format.js'
+import { useBookNames } from '../../lib/useBookNames.js'
 import { BookList, EmptyLinks, EmptyState, MyBookCard, PageHeader } from './parts.jsx'
 import { useScrollToActive } from './useScrollToActive.js'
 
@@ -17,6 +18,7 @@ const SHELVES = [
 ]
 
 function ShelfBook({ item, shelf }) {
+  const { title } = useBookNames(item.book)
   const toast = useToast()
   const action = useBookAction(item.book.id, { onError: (message) => toast(`Не удалось сохранить: ${message}`) })
   const selectId = useId()
@@ -37,7 +39,7 @@ function ShelfBook({ item, shelf }) {
           </option>
         ))}
       </select>
-      <Button size="sm" variant="ghost" onClick={() => action.mutate({ kind: 'shelf', value: null })} aria-label={`Убрать с полки «${item.book.title}»`}>
+      <Button size="sm" variant="ghost" onClick={() => action.mutate({ kind: 'shelf', value: null })} aria-label={`Убрать с полки «${title}»`}>
         <X size={15} aria-hidden /> Убрать
       </Button>
       {shelf === 'read' && (

@@ -4,12 +4,14 @@ import { Button } from '../../components/Button.jsx'
 import { RatingStars } from '../../components/RatingStars.jsx'
 import { useToast } from '../../components/toast-context.js'
 import { formatCount } from '../../lib/format.js'
+import { useBookNames } from '../../lib/useBookNames.js'
 import { BookList, EmptyLinks, EmptyState, MyBookCard, PageHeader } from './parts.jsx'
 
 const RATINGS = { one: 'оценка', few: 'оценки', many: 'оценок' }
 const date = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })
 
 function RatedBook({ item }) {
+  const { title } = useBookNames(item.book)
   const toast = useToast()
   const action = useBookAction(item.book.id, { onError: (message) => toast(`Не удалось сохранить: ${message}`) })
   return (
@@ -20,7 +22,7 @@ function RatedBook({ item }) {
         variant="ghost"
         className="ml-auto"
         onClick={() => action.mutate({ kind: 'rating', value: null })}
-        aria-label={`Удалить оценку «${item.book.title}»`}
+        aria-label={`Удалить оценку «${title}»`}
       >
         <Trash2 size={15} aria-hidden /> Удалить
       </Button>
