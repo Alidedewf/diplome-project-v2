@@ -1,6 +1,7 @@
 // JWT в заголовке Authorization: Bearer <token> (решения.md, 4)
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import { z } from 'zod'
 import { config } from '../config.js'
 import { prisma } from '../db.js'
 import { HttpError } from './http.js'
@@ -19,7 +20,17 @@ export const publicUser = (u) => ({
   name: u.name,
   createdAt: u.createdAt,
   onboardingCompleted: u.onboardingCompleted,
+  readingLanguages: u.readingLanguages ?? [],
 })
+
+// Языки чтения (2.8): 'ru' | 'kk' | 'en', несколько; повторы убираем, порядок — как в списке
+export const READING_LANGUAGES = ['ru', 'kk', 'en']
+export const readingLanguagesSchema = z.array(z.enum(READING_LANGUAGES)).max(3)
+  .transform((langs) => READING_LANGUAGES.filter((l) => langs.includes(l)))
+
+// Читающий по-русски (2.8): все, кроме отметивших английский, — и гость, и не выбравший язык (сайт русскоязычный,
+// фронт показывает им русские названия). Поднимаем книги, известные по-русски; с английским — выдача как раньше
+export const prefersRussian = (user) => !(user?.readingLanguages ?? []).includes('en')
 
 const unauthorized = () => new HttpError(401, 'unauthorized', 'Нужно войти в аккаунт')
 

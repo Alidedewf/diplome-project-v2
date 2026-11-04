@@ -2,7 +2,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { prisma } from '../db.js'
-import { optionalAuth, publicUser, requireAuth } from '../lib/auth.js'
+import { optionalAuth, publicUser, readingLanguagesSchema, requireAuth } from '../lib/auth.js'
 import { HttpError, parse } from '../lib/http.js'
 import { getOnboardingRound, getRecommendations, onboardingSession } from '../services/recommender.js'
 
@@ -30,6 +30,7 @@ const answersSchema = z.object({
     value: z.string().trim().min(1).max(200),
   })).max(50).optional(),
   description: z.string().trim().max(500).optional(), // «Опишите своими словами» — для смыслового подбора (ML)
+  readingLanguages: readingLanguagesSchema.optional(), // «На каком языке читаете?» (2.8); [] — сбросить
   round: z.number().int().min(1).max(10).default(1),
   answers: z.array(z.object({
     bookId: z.string().min(1).max(16),
@@ -40,7 +41,7 @@ const answersSchema = z.object({
 })
 
 router.post('/onboarding/answers', requireAuth, async (req, res) => {
-  const { topics, description, round, answers, completed } = parse(answersSchema, req.body)
+  const { topics, description, readingLanguages, round, answers, completed } = parse(answersSchema, req.body)
   const userId = req.user.id
   const ids = [...new Set(answers.map((a) => a.bookId))]
   if ((await prisma.book.count({ where: { id: { in: ids } } })) !== ids.length) {
@@ -77,14 +78,17 @@ router.post('/onboarding/answers', requireAuth, async (req, res) => {
         })),
       })
     }
+    const data = { ...(readingLanguages && { readingLanguages }) }
     if (completed) {
       // Пустую сессию не закрываем: повторный completed: true не плодит сессий
       if (answered || answers.length) {
         await tx.event.create({ data: { userId, type: 'onboarding_complete', payload: { session } } })
       }
-      return tx.user.update({ where: { id: userId }, data: { onboardingCompleted: true } })
+      data.onboardingCompleted = true
     }
-    return tx.user.findUnique({ where: { id: userId } })
+    return Object.keys(data).length
+      ? tx.user.update({ where: { id: userId }, data })
+      : tx.user.findUnique({ where: { id: userId } })
   })
   res.json({ saved: answers.length, user: publicUser(user) })
 })

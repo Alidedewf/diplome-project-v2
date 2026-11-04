@@ -17,6 +17,8 @@ model User {
   name                String
   onboardingCompleted Boolean   @default(false) @map("onboarding_completed")
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  // На каких языках читает: 'ru' | 'kk' | 'en' (2.8); пусто — не выбрано, выдача как для английского
+  readingLanguages    String[]  @default([]) @map("reading_languages")
 
   ratings     Rating[]
   shelves     Shelf[]
@@ -49,6 +51,24 @@ model Book {
   editionsCount      Int      @default(1) @map("editions_count") @db.SmallInt
   // Байесовское среднее (3.3) — считается при загрузке, нужно для сортировки «по рейтингу»
   weightedRating     Float    @default(0) @map("weighted_rating") @db.Real
+  // Из Wikidata (scripts/load-wikidata-ru.js, 2.8): русское название, русское имя автора и «известна по-русски» —
+  // есть русское имя автора или русское название
+  titleRu            String?  @map("title_ru")
+  authorRu           String?  @map("author_ru")
+  ruKnown            Boolean  @default(false) @map("ru_known")
+  // Возраст читателя из карточки Amazon (books_meta: «2 - 5 years» → 2 и 5, «18 years and up» → 18 и пусто)
+  readingAgeMin      Int?     @map("reading_age_min") @db.SmallInt
+  readingAgeMax      Int?     @map("reading_age_max") @db.SmallInt
+  // Русское описание: начало статьи русской Википедии (annotationSource 'wikipedia', annotationUrl — статья) или
+  // машинный перевод аннотации ('mt', файл ML); загрузка — scripts/load-wikidata-ru.js и scripts/load-annotations-ru.js
+  annotationRu       String?  @map("annotation_ru")
+  annotationSource   String?  @map("annotation_source") @db.VarChar(16)
+  annotationUrl      String?  @map("annotation_url")
+  // Откуда книга (1.5): 'amazon' | 'ru' | 'kz' — свой каталог из Wikidata (scripts/load-own-books.js), id = 'wd:' || QID,
+  // оценок нет; fame — известность (число статей в Википедиях), вместо популярности
+  source             String   @default("amazon") @db.VarChar(8)
+  fame               Int      @default(0)
+  wikidataQid        String?  @map("wikidata_qid") @db.VarChar(16)
   // Полнотекстовый поиск: генерируемая колонка (GENERATED ALWAYS AS … STORED, задана в миграции);
   // dbgenerated повторяет её выражение, чтобы Prisma не видела расхождения со схемой
   searchVector       Unsupported("tsvector")? @default(dbgenerated("(setweight(to_tsvector('english'::regconfig, title), 'A'::\"char\") || setweight(to_tsvector('simple'::regconfig, COALESCE(author, ''::text)), 'B'::\"char\"))")) @map("search_vector")
@@ -65,10 +85,26 @@ model Book {
   @@index([ratingsCount(sort: Desc)])
   @@index([weightedRating(sort: Desc)])
   @@index([isbn13])
+  @@index([section, ruKnown(sort: Desc), ratingsCount(sort: Desc)])
+  @@index([section, ruKnown(sort: Desc), weightedRating(sort: Desc)])
+  @@index([ruKnown(sort: Desc), ratingsCount(sort: Desc)])
+  @@index([source, fame(sort: Desc)])
+  @@index([wikidataQid])
   @@index([searchVector], type: Gin)
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "books_title_trgm_idx")
   @@index([author(ops: raw("gin_trgm_ops"))], type: Gin, map: "books_author_trgm_idx")
+  @@index([titleRu(ops: raw("gin_trgm_ops"))], type: Gin, map: "books_title_ru_trgm_idx")
   @@map("books")
+}
+
+// Авторы каталога, найденные в Wikidata (2.8); name_ru — пусто у псевдонимов (Robert Galbraith → Джоан Роулинг):
+// книга известна по-русски, но русское имя другого человека не показываем
+model AuthorRu {
+  author String  @id // как в books.author
+  nameRu String? @map("name_ru")
+  qid    String  @db.VarChar(16)
+
+  @@map("authors_ru")
 }
 
 // Только оценки пользователей сайта, шкала 1–5 (2.2)

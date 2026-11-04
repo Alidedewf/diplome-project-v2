@@ -42,7 +42,7 @@ describe('векторы книг', () => {
     expect(await prisma.embeddingModel.findUnique({ where: { name: MODEL } })).toMatchObject({ dim: DIM, books: BOOKS.length })
 
     const [index] = await prisma.$queryRaw`SELECT indexdef FROM pg_indexes WHERE indexname = ${hnswIndexName(MODEL)}`
-    expect(index.indexdef).toMatch(/USING hnsw \(\(\(embedding\)::vector\(8\)\) vector_cosine_ops\) WHERE \(\(model\)::text = 'test\/circle-8'/)
+    expect(index.indexdef).toMatch(/USING hnsw \(\(\(embedding\)::vector\(8\)\) vector_cosine_ops\) WITH \(m='24', ef_construction='200'\) WHERE \(\(model\)::text = 'test\/circle-8'/)
   })
 
   it('повторная загрузка заменяет векторы модели, другие модели не трогает', async () => {
@@ -72,6 +72,18 @@ describe('векторы книг', () => {
     })
     expect(plan.map((p) => p['QUERY PLAN']).join('\n')).toContain(hnswIndexName(MODEL))
     await expect(nearestToVector([1, 2, 3], { model: MODEL })).rejects.toThrow(/Размерность/)
+  })
+
+  it('--append: дописывает и обновляет часть книг, остальные векторы и индекс остаются', async () => {
+    const model = 'test/append-8'
+    await load(await writeParquet('base.parquet', rows.slice(0, 5), { model }))
+    const res = await load(await writeParquet('more.parquet', [[BOOKS[0].id, vectorOf(30)], [BOOKS[7].id, vectorOf(7)]], { model }), { append: true })
+    expect(res.loaded).toBe(2)
+    expect(await prisma.embeddingModel.findUnique({ where: { name: model } })).toMatchObject({ books: 6 })
+    const [{ count }] = await prisma.$queryRaw`SELECT count(*)::int FROM pg_indexes WHERE indexname = ${hnswIndexName(model)}`
+    expect(count).toBe(1)
+    await expect(load(await writeParquet('none.parquet', rows.slice(0, 1), { model: 'test/missing-8' }), { append: true }))
+      .rejects.toThrow(/дописывать некуда/)
   })
 
   it('плохие файлы отклоняются, данные модели не меняются', async () => {

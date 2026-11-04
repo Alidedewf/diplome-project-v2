@@ -3,12 +3,12 @@ import { describe, expect, it } from 'vitest'
 import { AUTHOR_BOOKS, BOOKS } from './fixtures.js'
 import { app, registerUser } from './helpers.js'
 
-const BOOK_KEYS = ['annotation', 'author', 'cover', 'id', 'rating', 'ratingsCount', 'section', 'subsection', 'title', 'year']
+const BOOK_KEYS = ['annotation', 'author', 'authorRu', 'cover', 'id', 'rating', 'ratingsCount', 'section', 'source', 'subsection', 'title', 'titleRu', 'year']
 
 describe('каталог и поиск', () => {
   it('книга в форме слоя данных фронтенда; нет книги — 404', async () => {
     const res = await request(app).get(`/api/books/${BOOKS[0].id}`).expect(200)
-    expect(Object.keys(res.body).sort()).toEqual([...BOOK_KEYS, 'my', 'recommendation'].sort())
+    expect(Object.keys(res.body).sort()).toEqual([...BOOK_KEYS, 'annotationRu', 'annotationSource', 'annotationUrl', 'my', 'recommendation'].sort())
     expect(res.body).toMatchObject({ recommendation: null, my: null })
     await request(app).get('/api/books/NOPE').expect(404)
   })
@@ -57,6 +57,21 @@ describe('каталог и поиск', () => {
     expect(await ids(u.auth)).not.toContain(hidden.id)
     expect(await ids(u.auth)).toContain(kept.id)
     expect(await ids({})).toContain(hidden.id)
+  })
+
+  it('опечатки: стоп-слова не мешают, слова в другом порядке и слова из названия вместе с автором', async () => {
+    const titles = async (q) => {
+      const res = await request(app).get('/api/search').query({ q, mode: 'keyword' }).expect(200)
+      expect(res.body.fuzzy).toBe(true)
+      return res.body.items.map((b) => b.title)
+    }
+    // Стоп-слово в запросе и опечатка
+    expect((await titles('the silent rivr'))[0]).toBe('Silent River')
+    expect((await titles('the rivr'))).toContain('Silent River') // одно значимое слово — ищем по нему
+    // Фраза не похожа (слова переставлены) — по словам: каждое похоже на слово имени автора или названия
+    expect(await titles('quil mara')).toEqual(expect.arrayContaining(AUTHOR_BOOKS.map((b) => b.title)))
+    // Слова названия и фамилия автора в одном запросе
+    expect((await titles('glas orchard quil'))[0]).toBe('Glass Orchard')
   })
 
   it('фильтры поиска', async () => {

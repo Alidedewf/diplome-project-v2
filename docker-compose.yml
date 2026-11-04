@@ -7,6 +7,15 @@ services:
     restart: unless-stopped
     # Разделяемая память для параллельной сборки HNSW-индексов pgvector (в Docker по умолчанию 64 МБ)
     shm_size: 1gb
+    # Кэш базы: HNSW-индекс векторов — 1,6 ГБ, при 128 МБ по умолчанию первый смысловой запрос в новой области шёл
+    # 1–2,4 с (решения.md 4.9). 1 ГБ — больше не даём, ML-части нужна память. pg_prewarm/autoprewarm запоминает горячие
+    # страницы и возвращает их в кэш после перезапуска
+    command: >
+      postgres
+      -c shared_buffers=1GB
+      -c effective_cache_size=4GB
+      -c shared_preload_libraries=pg_prewarm
+      -c pg_prewarm.autoprewarm=true
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

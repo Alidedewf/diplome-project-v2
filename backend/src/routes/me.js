@@ -2,7 +2,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { Prisma, prisma } from '../db.js'
-import { checkPassword, hashPassword, publicUser, requireAuth } from '../lib/auth.js'
+import { checkPassword, hashPassword, publicUser, readingLanguagesSchema, requireAuth } from '../lib/auth.js'
 import { bookColumns, ensureBook, toBook } from '../lib/books.js'
 import { HttpError, pageSchema, parse } from '../lib/http.js'
 import { SECTION_NAMES, sectionLabel } from '../lib/sections.js'
@@ -383,10 +383,11 @@ const profileSchema = z.object({
   email: emailSchema.optional(),
   password: passwordSchema.optional(),
   currentPassword: z.string().optional(),
+  readingLanguages: readingLanguagesSchema.optional(), // без пароля
 })
 
 router.patch('/profile', async (req, res) => {
-  const { name, email, password, currentPassword } = parse(profileSchema, req.body)
+  const { name, email, password, currentPassword, readingLanguages } = parse(profileSchema, req.body)
   const user = req.user
   const sensitive = (email && email !== user.email) || password
   if (sensitive && !(currentPassword && (await checkPassword(currentPassword, user.passwordHash)))) {
@@ -397,7 +398,7 @@ router.patch('/profile', async (req, res) => {
   }
   const updated = await prisma.user.update({
     where: { id: user.id },
-    data: { name, email, ...(password && { passwordHash: await hashPassword(password) }) },
+    data: { name, email, readingLanguages, ...(password && { passwordHash: await hashPassword(password) }) },
   })
   res.json({ user: publicUser(updated) })
 })

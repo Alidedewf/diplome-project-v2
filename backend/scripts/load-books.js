@@ -1,4 +1,5 @@
 // Загрузка каталога: data/processed/books_clean.parquet → таблица books (решения.md, 4.1).
+// Возраст читателя — из books_meta.parquet рядом (поле «Reading age» в details, есть у ~85 тыс. книг).
 //
 // Parquet читается потоково через DuckDB (файл 1,5 ГБ, одна группа строк — целиком в память не берём),
 // строки идут через COPY во временную таблицу, оттуда — INSERT … ON CONFLICT DO UPDATE.
@@ -16,6 +17,7 @@ import { config, ROOT } from '../src/config.js'
 
 const BOOKS = path.resolve(process.argv[2] ?? path.join(ROOT, 'data/processed/books_clean.parquet'))
 const RATINGS = path.join(path.dirname(BOOKS), 'ratings_clean.parquet')
+const META = path.join(path.dirname(BOOKS), 'books_meta.parquet')
 
 // Взвешенный рейтинг (3.3): WR = v/(v+m)·R + m/(v+m)·C по оценкам 5-core.
 // m = 40 — 90-й перцентиль числа оценок на книгу (медиана 10); подбирается позже вместе с ML
@@ -26,6 +28,7 @@ const ANNOTATION_MAX = 5000
 const COLUMNS = [
   'id', 'title', 'author', 'year', 'section', 'category', 'subsection', 'format', 'language', 'isbn13',
   'cover', 'annotation', 'rating', 'ratings_count', 'amazon_ratings_count', 'editions_count', 'weighted_rating',
+  'reading_age_min', 'reading_age_max',
 ]
 
 const sqlPath = (p) => `'${p.replaceAll('\\', '/').replaceAll("'", "''")}'`
@@ -35,6 +38,20 @@ const SELECT = `
     SELECT parent_asin, avg(rating) AS mean, count(*) AS n
     FROM read_parquet(${sqlPath(RATINGS)}) GROUP BY parent_asin
   ), c AS (SELECT avg(rating) AS mean FROM read_parquet(${sqlPath(RATINGS)}))
+  -- «Reading age»: «2 - 5 years, from customers», «18 years and up», «6 months - 3 years», «Baby - 2 years»;
+  -- месяцы — 0 лет (снизу) и 1 год (сверху)
+  , age AS (
+    SELECT parent_asin, lower(json_extract_string(details, '$."Reading age"')) AS ra
+    FROM read_parquet(${sqlPath(META)}) WHERE details LIKE '%Reading age%'
+  ), ages AS (
+    SELECT parent_asin,
+      CASE WHEN ra LIKE 'baby%' OR regexp_matches(ra, '^\\d+\\s*months?') THEN 0
+        ELSE TRY_CAST(regexp_extract(ra, '^(\\d+)', 1) AS INTEGER) END AS age_min,
+      CASE WHEN ra LIKE '%and up%' THEN NULL
+        WHEN regexp_matches(ra, '-\\s*\\d+\\s*months?') THEN 1
+        ELSE TRY_CAST(regexp_extract(ra, '-\\s*(\\d+)\\s*years?', 1) AS INTEGER) END AS age_max
+    FROM age
+  )
   SELECT
     b.parent_asin, b.title, b.author, b.year::INTEGER,
     b.onboarding_section, b.cat2, b.cat3, b.format, b.language, b.isbn13, b.image,
@@ -42,9 +59,10 @@ const SELECT = `
     round(b.average_rating, 2)::DOUBLE,
     b.n_ratings::INTEGER, coalesce(b.rating_number, 0)::INTEGER, b.n_editions::INTEGER,
     (coalesce(r.n, 0) / (coalesce(r.n, 0) + ${M}) * coalesce(r.mean, c.mean)
-      + ${M} / (coalesce(r.n, 0) + ${M}) * c.mean)::DOUBLE
+      + ${M} / (coalesce(r.n, 0) + ${M}) * c.mean)::DOUBLE,
+    ages.age_min, ages.age_max
   FROM read_parquet(${sqlPath(BOOKS)}) b
-  LEFT JOIN r USING (parent_asin) CROSS JOIN c
+  LEFT JOIN r USING (parent_asin) LEFT JOIN ages USING (parent_asin) CROSS JOIN c
 `
 
 function cutAnnotation(text) {

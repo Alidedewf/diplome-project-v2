@@ -16,6 +16,11 @@ export const config = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '7d',
   port: Number(process.env.PORT ?? 3000),
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
+  // ML-сервис (решения.md 3.8): эмбеддинг поискового запроса. Не отвечает за mlTimeoutMs — поиск без смысловой части
+  mlServiceUrl: process.env.ML_SERVICE_URL ?? 'http://127.0.0.1:8000',
+  mlTimeoutMs: Number(process.env.ML_TIMEOUT_MS ?? 1500),
+  // Векторы книг для «похожих» и онбординга (без ML-сервиса — соседи берутся прямо из pgvector)
+  embeddingModel: process.env.EMBEDDING_MODEL ?? 'intfloat/multilingual-e5-base',
 }
 
 // Корень репозитория — для путей к data/

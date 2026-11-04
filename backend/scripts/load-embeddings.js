@@ -8,8 +8,11 @@
 // Каждый запуск заменяет все векторы этой модели целиком (повторный запуск даёт тот же результат),
 // векторы других моделей не трогаются. Книги, которых нет в каталоге, пропускаются (выводится их число).
 // После загрузки — HNSW-индекс по косинусному расстоянию для этой модели.
+// --append — дописать (или обновить) векторы части книг, не трогая остальные, без пересборки индекса (HNSW принимает
+// новые строки сам): векторы своего каталога русских и казахских книг (own_books, 1.5) к векторам Amazon. Модель с той
+// же размерностью уже должна быть в базе.
 //
-// Запуск из backend/:  npm run load:embeddings -- путь/к/файлу.parquet [--model имя] [--work-mem 1GB]
+// Запуск из backend/:  npm run load:embeddings -- путь/к/файлу.parquet [--model имя] [--work-mem 900MB] [--append]
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
@@ -22,6 +25,11 @@ import { hnswIndexName } from '../src/lib/embeddings.js'
 
 const DEFAULT_FILE = path.join(ROOT, 'data/processed/book_embeddings.parquet')
 const MAX_DIM = 2000 // предел HNSW в pgvector для типа vector
+// Параметры графа HNSW. По умолчанию pgvector — m 16, ef_construction 64: на скученных векторах e5 индекс терял соседей
+// (совпадение top-10 с точным перебором 0,92 при ef_search 400, «Project Hail Mary» по названию не находился).
+// С 24/200 — 0,978 и находится; сборка 405 тыс. × 768 — ~24 мин вместо ~8 (граф не помещается в 900MB), размер тот же
+const HNSW_M = 24
+const HNSW_EF_CONSTRUCTION = 200
 
 const sqlPath = (p) => `'${p.replaceAll('\\', '/').replaceAll("'", "''")}'`
 const sqlString = (s) => `'${String(s).replaceAll("'", "''")}'`
@@ -83,12 +91,14 @@ async function* csvLines(result, onRows) {
   }
 }
 
-// HNSW по косинусному расстоянию. Параллельной сборке нужна разделяемая память (/dev/shm): в Docker по умолчанию
-// её 64 МБ — тогда сборка падает, и повторяем в один поток
+// HNSW по косинусному расстоянию. Параллельной сборке нужна разделяемая память (/dev/shm) чуть больше
+// maintenance_work_mem: в docker-compose.yml shm_size 1 ГБ, поэтому по умолчанию 900MB (при 1GB сегмент — 1,07 ГБ).
+// Не хватило (например, Docker без shm_size — 64 МБ) — повторяем в один поток
 async function buildIndex(db, { model, dim, workMem, log }) {
   const index = hnswIndexName(model)
   const sql = `CREATE INDEX ${ident(index)} ON book_embeddings
-    USING hnsw ((embedding::vector(${dim})) vector_cosine_ops) WHERE model = ${sqlString(model)}`
+    USING hnsw ((embedding::vector(${dim})) vector_cosine_ops) WITH (m = ${HNSW_M}, ef_construction = ${HNSW_EF_CONSTRUCTION})
+    WHERE model = ${sqlString(model)}`
   await db.query(`SET maintenance_work_mem = ${sqlString(workMem)}`)
   try {
     await db.query(sql)
@@ -101,7 +111,7 @@ async function buildIndex(db, { model, dim, workMem, log }) {
   return index
 }
 
-export async function loadEmbeddings({ file = DEFAULT_FILE, model: modelArg, workMem = '1GB', databaseUrl = config.databaseUrl, log = console.log } = {}) {
+export async function loadEmbeddings({ file = DEFAULT_FILE, model: modelArg, workMem = '900MB', append = false, databaseUrl = config.databaseUrl, log = console.log } = {}) {
   const started = performance.now()
   const seconds = () => ((performance.now() - started) / 1000).toFixed(1)
   const duck = await (await DuckDBInstance.create(':memory:')).connect()
@@ -113,12 +123,18 @@ export async function loadEmbeddings({ file = DEFAULT_FILE, model: modelArg, wor
     log(`Файл: ${path.resolve(file)}\nМодель: ${model}, размерность ${dim}, строк ${info.rows.toLocaleString('ru-RU')}`)
 
     await db.query('BEGIN')
-    // Старые векторы модели и её индекс — заменяются целиком; индекс строится после вставки (так быстрее)
-    await db.query(`DROP INDEX IF EXISTS ${ident(hnswIndexName(model))}`)
-    await db.query(`
-      INSERT INTO embedding_models (name, dim, books, loaded_at) VALUES ($1, $2, 0, now())
-      ON CONFLICT (name) DO UPDATE SET dim = EXCLUDED.dim, books = 0, loaded_at = now()`, [model, dim])
-    await db.query('DELETE FROM book_embeddings WHERE model = $1', [model])
+    if (append) {
+      const { rows: [existing] } = await db.query('SELECT dim FROM embedding_models WHERE name = $1', [model])
+      if (!existing) throw new LoadError(`Модели ${model} в базе нет — дописывать некуда, загрузите без --append`)
+      if (existing.dim !== dim) throw new LoadError(`У модели ${model} в базе размерность ${existing.dim}, в файле — ${dim}`)
+    } else {
+      // Старые векторы модели и её индекс — заменяются целиком; индекс строится после вставки (так быстрее)
+      await db.query(`DROP INDEX IF EXISTS ${ident(hnswIndexName(model))}`)
+      await db.query(`
+        INSERT INTO embedding_models (name, dim, books, loaded_at) VALUES ($1, $2, 0, now())
+        ON CONFLICT (name) DO UPDATE SET dim = EXCLUDED.dim, books = 0, loaded_at = now()`, [model, dim])
+      await db.query('DELETE FROM book_embeddings WHERE model = $1', [model])
+    }
     await db.query(`CREATE TEMP TABLE embeddings_stage (book_id text, embedding vector(${dim})) ON COMMIT DROP`)
 
     let read = 0
@@ -134,16 +150,21 @@ export async function loadEmbeddings({ file = DEFAULT_FILE, model: modelArg, wor
     // Только книги каталога; повтор id в файле — берётся первый
     const { rowCount: loaded } = await db.query(`
       INSERT INTO book_embeddings (book_id, model, embedding)
-      SELECT s.book_id, $1, s.embedding FROM embeddings_stage s JOIN books b ON b.id = s.book_id
-      ON CONFLICT DO NOTHING`, [model])
+      SELECT DISTINCT ON (s.book_id) s.book_id, $1, s.embedding FROM embeddings_stage s JOIN books b ON b.id = s.book_id
+      ON CONFLICT (model, book_id) DO ${append ? 'UPDATE SET embedding = EXCLUDED.embedding' : 'NOTHING'}`, [model])
     const { rows: [{ unknown }] } = await db.query(
       'SELECT count(*)::int AS unknown FROM embeddings_stage s WHERE NOT EXISTS (SELECT 1 FROM books b WHERE b.id = s.book_id)')
-    await db.query('UPDATE embedding_models SET books = $2 WHERE name = $1', [model, loaded])
+    await db.query(`UPDATE embedding_models SET books = (SELECT count(*) FROM book_embeddings WHERE model = $1), loaded_at = now()
+      WHERE name = $1`, [model])
     await db.query('COMMIT')
     log(`Загружено: ${loaded.toLocaleString('ru-RU')} векторов — ${seconds()} с` +
       (unknown > 0 ? `; нет в каталоге: ${unknown.toLocaleString('ru-RU')}` : '') +
       (info.duplicates ? `; повторы id: ${info.duplicates}` : ''))
 
+    if (append) {
+      log(`Дописано без пересборки индекса — ${seconds()} с`)
+      return { model, dim, loaded, unknown, duplicates: info.duplicates, index: hnswIndexName(model) }
+    }
     const indexStarted = performance.now()
     const index = await buildIndex(db, { model, dim, workMem, log })
     await db.query('ANALYZE book_embeddings')
@@ -161,9 +182,9 @@ export async function loadEmbeddings({ file = DEFAULT_FILE, model: modelArg, wor
 if (import.meta.main) {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
-    options: { model: { type: 'string' }, 'work-mem': { type: 'string' } },
+    options: { model: { type: 'string' }, 'work-mem': { type: 'string' }, append: { type: 'boolean' } },
   })
-  loadEmbeddings({ file: positionals[0], model: values.model, workMem: values['work-mem'] }).catch((err) => {
+  loadEmbeddings({ file: positionals[0], model: values.model, workMem: values['work-mem'], append: values.append }).catch((err) => {
     console.error(err instanceof LoadError ? `Ошибка: ${err.message}` : err)
     process.exit(1)
   })
