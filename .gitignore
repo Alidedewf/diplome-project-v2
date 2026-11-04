@@ -34,3 +34,6 @@ models/**
 .idea/
 .DS_Store
 Thumbs.db
+
+# --- Служебные файлы обучения ---
+catboost_info/
