@@ -5,15 +5,20 @@ import { Button } from '../../components/Button.jsx'
 import { SkeletonLine } from '../../components/Skeleton.jsx'
 import { useToast } from '../../components/toast-context.js'
 import { formatCount } from '../../lib/format.js'
+import { subsectionLabel } from '../../lib/sections.js'
 import { EmptyState, PageHeader } from './parts.jsx'
 
 // Профиль вкусов (2.2, п. 3): что система думает о пользователе. Источник каждого пункта — выбран в онбординге
 // или выведен из понравившихся книг (weight — сколько их); «Это не про меня» убирает пункт из рекомендаций
 const GROUPS = [
   { kind: 'section', title: 'Темы' },
-  { kind: 'subsection', title: 'Подтемы', en: true },
-  { kind: 'author', title: 'Авторы', en: true },
+  { kind: 'subsection', title: 'Подтемы' },
+  { kind: 'author', title: 'Авторы' },
 ]
+// Подтема приходит без раздела — берём общий перевод из shared/subsections_ru.json; авторы — как есть, по-английски
+const labelOf = (item) => (item.kind === 'subsection' ? subsectionLabel(item.value) : item.label)
+const langOf = (item) => (item.kind === 'author' ? 'en' : undefined)
+
 const LIKED = { one: 'понравившейся книге', few: 'понравившимся книгам', many: 'понравившимся книгам' }
 
 function source(item) {
@@ -22,13 +27,13 @@ function source(item) {
 }
 
 // Полоса — доля от самого весомого пункта в группе: видно, что влияет сильнее
-function TasteItem({ item, max, en, onReject }) {
+function TasteItem({ item, max, onReject }) {
   return (
     <li className="flex items-center gap-3 py-3">
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <span lang={en ? 'en' : undefined} className="font-medium">
-            {item.label}
+          <span lang={langOf(item)} className="font-medium">
+            {labelOf(item)}
           </span>
           <span className="text-xs text-muted">{source(item)}</span>
         </div>
@@ -38,7 +43,7 @@ function TasteItem({ item, max, en, onReject }) {
           </div>
         )}
       </div>
-      <Button size="sm" variant="ghost" onClick={onReject} aria-label={`Это не про меня: ${item.label}`}>
+      <Button size="sm" variant="ghost" onClick={onReject} aria-label={`Это не про меня: ${labelOf(item)}`}>
         <X size={15} aria-hidden /> <span className="hidden sm:inline">Это не про меня</span>
       </Button>
     </li>
@@ -104,7 +109,7 @@ export function TastePage() {
               Выберите любимые темы в онбординге или оцените несколько книг — здесь появится ваш профиль.
             </EmptyState>
           ) : (
-            GROUPS.map(({ kind, title, en }) => {
+            GROUPS.map(({ kind, title }) => {
               const group = items.filter((i) => i.kind === kind)
               if (!group.length) return null
               const max = Math.max(...group.map((i) => i.weight))
@@ -115,7 +120,7 @@ export function TastePage() {
                   </h2>
                   <ul className="divide-y divide-line">
                     {group.map((item) => (
-                      <TasteItem key={item.value} item={item} max={max} en={en} onReject={() => set(item, true)} />
+                      <TasteItem key={item.value} item={item} max={max} onReject={() => set(item, true)} />
                     ))}
                   </ul>
                 </section>
@@ -132,10 +137,10 @@ export function TastePage() {
               <ul className="mt-3 flex flex-wrap gap-2">
                 {rejected.map((item) => (
                   <li key={`${item.kind}:${item.value}`} className="flex items-center gap-1 rounded-full border border-line py-1 pr-1 pl-3 text-sm">
-                    <span lang={item.kind === 'section' ? undefined : 'en'} className="text-muted line-through decoration-muted/50">
-                      {item.label}
+                    <span lang={langOf(item)} className="text-muted line-through decoration-muted/50">
+                      {labelOf(item)}
                     </span>
-                    <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => set(item, false)} aria-label={`Вернуть: ${item.label}`}>
+                    <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => set(item, false)} aria-label={`Вернуть: ${labelOf(item)}`}>
                       <Undo2 size={14} aria-hidden /> Вернуть
                     </Button>
                   </li>
