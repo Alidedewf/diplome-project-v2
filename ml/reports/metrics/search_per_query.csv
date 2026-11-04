@@ -1,0 +1,79 @@
+id,запрос,подходящих,e5-small,e5-base,minilm,tfidf
+en-t01,Where the Crawdads Sing,1,1.0,1.0,0.0,1.0
+en-t02,The Silent Patient,1,1.0,1.0,1.0,0.0
+en-t03,Project Hail Mary,1,1.0,1.0,1.0,0.0
+en-t04,Sapiens,1,1.0,1.0,1.0,1.0
+en-t05,Educated,1,0.0,1.0,0.0,0.0
+en-t06,Dune,1,1.0,1.0,0.0,0.0
+en-t07,1984,1,1.0,1.0,0.0,1.0
+en-t08,"Thinking, Fast and Slow",1,1.0,1.0,0.0,1.0
+en-t09,Clean Code,1,1.0,1.0,1.0,1.0
+en-t10,The Very Hungry Caterpillar,1,1.0,1.0,1.0,0.0
+en-t11,Becoming Michelle Obama,1,1.0,1.0,0.0,0.0
+en-t12,The Hunger Games,1,1.0,1.0,1.0,0.0
+en-t13,Eloquent JavaScript,1,1.0,1.0,1.0,1.0
+en-t14,Atomic Habits,1,1.0,1.0,1.0,1.0
+en-a01,stephen king,208,0.2,0.5,0.0,0.4
+en-a02,agatha christie novels,205,0.5,0.3,0.0,0.4
+en-a03,brandon sanderson,61,0.7,0.3,0.0,0.6
+en-a04,malcolm gladwell,10,0.7,0.6,0.3,0.6
+en-d01,a detective mystery set in a small town,936,1.0,0.9,0.1,0.1
+en-d02,cozy mystery with a cat,147,1.0,1.0,0.1,0.0
+en-d03,learn JavaScript from scratch for beginners,66,0.9,1.0,1.0,0.8
+en-d04,keto diet cookbook,169,1.0,1.0,0.0,0.9
+en-d05,bedtime picture book for toddlers,1489,1.0,1.0,1.0,1.0
+en-d06,WWII novel about women in occupied France,247,0.6,0.8,0.3,0.2
+en-d07,personal finance for beginners,305,1.0,1.0,1.0,0.6
+en-d08,Amish romance,728,1.0,1.0,0.9,0.6
+en-d09,fantasy about dragons for teens,315,0.6,1.0,0.7,0.0
+en-d10,how to train your puppy,280,1.0,1.0,1.0,0.2
+en-d11,time travel romance in the Scottish Highlands,50,0.6,0.8,0.9,0.3
+en-d12,stoic philosophy for everyday life,23,1.0,1.0,0.7,0.7
+en-d13,true crime about serial killers,101,1.0,1.0,0.8,0.8
+en-d14,books about the universe and space exploration,611,1.0,0.7,0.9,0.9
+en-d15,python programming for data science,31,0.8,0.9,0.8,0.5
+en-d16,how to cope with grief after losing a loved one,185,1.0,1.0,1.0,0.7
+ru-t01,грокаем алгоритмы,1,1.0,1.0,1.0,0.0
+ru-t02,мастер и маргарита,1,1.0,1.0,0.0,0.0
+ru-t03,преступление и наказание,1,1.0,1.0,0.0,0.0
+ru-t04,война и мир толстой,1,1.0,1.0,0.0,0.0
+ru-t05,убить пересмешника,1,0.0,0.0,0.0,0.0
+ru-t06,гарри поттер и философский камень,1,1.0,1.0,0.0,0.0
+ru-t07,маленький принц,1,1.0,1.0,1.0,0.0
+ru-t08,краткая история времени,1,1.0,1.0,1.0,0.0
+ru-t09,думай медленно решай быстро,1,1.0,1.0,0.0,0.0
+ru-t10,богатый папа бедный папа,1,1.0,1.0,1.0,0.0
+ru-t11,девушка в поезде,1,1.0,1.0,1.0,0.0
+ru-t12,чистый код,1,1.0,1.0,1.0,0.0
+ru-d01,книги про космос,611,0.8,0.1,0.9,0.0
+ru-d02,детектив в маленьком городке,936,0.4,0.4,0.2,0.0
+ru-d03,как выучить JavaScript с нуля,66,0.8,0.9,0.8,0.6
+ru-d04,сказки на ночь для малышей,1489,0.6,0.9,0.8,0.0
+ru-d05,рецепты домашнего хлеба,875,0.8,0.2,1.0,0.0
+ru-d06,история второй мировой войны,1419,1.0,1.0,0.7,0.0
+ru-d07,финансовая грамотность для начинающих,305,0.7,0.5,0.7,0.0
+ru-d08,фэнтези про драконов,416,0.9,0.7,0.6,0.0
+ru-d09,книга про привычки,197,0.2,0.4,0.8,0.0
+ru-d10,как воспитывать детей,234,0.7,1.0,0.9,0.0
+ru-d11,вязание для начинающих,1386,0.5,0.5,0.7,0.0
+ru-d12,биография стива джобса,32,0.3,0.0,0.0,0.0
+kk-01,ғарыш туралы кітаптар,611,0.1,0.0,0.0,0.0
+kk-02,балаларға арналған ертегілер,814,0.0,0.2,0.3,0.0
+kk-03,Қазақстан туралы кітаптар,6,0.0,0.16666666666666666,0.0,0.0
+kk-04,Кішкентай ханзада,1,0.0,0.0,0.0,0.0
+kk-05,Гарри Поттер және философиялық тас,1,0.0,1.0,1.0,0.0
+kk-06,махаббат туралы роман,9876,1.0,1.0,1.0,0.0
+kk-07,екінші дүниежүзілік соғыс тарихы,1419,1.0,1.0,0.8,0.0
+kk-08,бағдарламалауды нөлден үйрену,752,0.3,0.7,0.6,0.0
+ty-01,harry poter and the sorcerers stone,1,1.0,1.0,1.0,0.0
+ty-02,atomik habbits,1,1.0,1.0,0.0,0.0
+ty-03,the hobit tolkein,1,0.0,1.0,0.0,0.0
+ty-04,girl on the trian,1,0.0,0.0,0.0,0.0
+ty-05,pride and prejudise,1,1.0,1.0,1.0,1.0
+ty-06,the alchemyst coelho,1,1.0,1.0,1.0,0.0
+ty-07,where the crowdads sing,1,0.0,1.0,0.0,0.0
+ty-08,thinking fast and slwo,1,1.0,1.0,0.0,0.0
+ty-09,the silent pateint,1,1.0,1.0,0.0,0.0
+ty-10,sapeins brief histroy of humankind,1,1.0,1.0,1.0,0.0
+ty-11,грокаем алгаритмы,1,1.0,0.0,0.0,0.0
+ty-12,мастер и маргорита,1,1.0,1.0,0.0,0.0
