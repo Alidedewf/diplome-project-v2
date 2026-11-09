@@ -131,13 +131,16 @@ def export_own(key: str, src: Path = OWN_IN, path: Path = OWN_EXPORT) -> Path:
         keep = (text.str.len() - own["title"].fillna("").astype(str).str.len()).to_numpy() >= 30
         rule = "текст длиннее названия меньше чем на 30 символов"
     else:
-        keep = np.ones(len(own), bool)
-        rule = "нет (в файле только id и текст)"
+        # Текст — «Название. Автор. жанр. описание»: после названия и автора должно остаться от 30 символов
+        rest = text.map(lambda t: ". ".join(t.split(". ")[2:]))
+        keep = (rest.str.len() >= 30).to_numpy()
+        rule = "после названия и автора меньше 30 символов (нет жанра и описания)"
+    ids = (own["book_id"] if "book_id" in own else own["id"]).to_numpy()
     order = np.argsort(text[keep].str.len().to_numpy())
     vecs = encode(key, text[keep].to_numpy()[order].tolist(), "passage")
     out = np.empty_like(vecs)
     out[order] = vecs
-    return _write(path, own["id"].to_numpy()[keep], out, key, "own_books.parquet: text (название + жанр + описание)",
+    return _write(path, ids[keep], out, key, "own_books.parquet: text (название + автор + жанр + описание)",
                   rule, int((~keep).sum()))
 
 
