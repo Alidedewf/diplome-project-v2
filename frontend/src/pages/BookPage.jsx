@@ -90,7 +90,11 @@ function UserActions({ book }) {
 
 // Длинный текст свёрнут до 6 строк с «Читать дальше». В русских описаниях (Википедия) абзацы сохраняем,
 // в английских аннотациях Amazon переводы строк случайные — их нет
-function Clamped({ text, lang, className }) {
+// знаки ударения из Википедии («Слова́ назида́ния») в нашем шрифте ложатся криво — убираем
+const clean = (text) => text.replace(/\u0301/g, '')
+
+function Clamped({ text: raw, lang, className }) {
+  const text = clean(raw)
   const [open, setOpen] = useState(false)
   const long = text.length > 420
   return (
@@ -258,7 +262,7 @@ export function BookPage() {
 
           <UserActions book={book} />
 
-          <WhyRecommended reason={book.recommendation} />
+          <WhyRecommended reason={book.recommendation} book={book} />
 
           <Annotation book={book} />
 

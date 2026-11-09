@@ -1,14 +1,16 @@
+import { bookLanguage } from '../lib/bookNames.js'
 import { cn } from '../lib/format.js'
 
-// Пометка языка оригинала у своих русских и казахских книг (1.5). У книг Amazon (английских) — ничего
+// Пометка языка оригинала у своих русских и казахских книг (1.5). У книг Amazon (английских) — ничего.
+// Язык — по originalLanguage (в «казахской литературе» есть русскоязычные книги), иначе по source
 const ORIGIN = {
   ru: { label: 'На русском', title: 'Книга на русском языке' },
-  kz: { label: 'Қазақша', lang: 'kk', hint: 'на казахском', title: 'Книга на казахском языке' },
+  kk: { label: 'Қазақша', lang: 'kk', hint: 'на казахском', title: 'Книга на казахском языке' },
 }
 
 // overlay — коротко, на обложке в рядах; иначе — чип с пояснением по-русски («Қазақша · на казахском»)
 export function OriginChip({ book, overlay = false, className }) {
-  const origin = ORIGIN[book?.source]
+  const origin = book?.source && book.source !== 'amazon' ? ORIGIN[bookLanguage(book)] : null
   if (!origin) return null
   return (
     <span

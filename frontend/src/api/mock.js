@@ -1,6 +1,5 @@
 // Запасной режим без сервера (VITE_USE_MOCKS=1): данные из shared/mock/books_sample.json,
 // пользователи и их действия — в localStorage. Формы ответов те же, что у настоящего API (см. ./index.js).
-import { shortTitle } from '../lib/format.js'
 import { sectionLabel, subsectionLabel } from '../lib/sections.js'
 import { ApiError, getToken, setToken } from './http.js'
 
@@ -260,7 +259,7 @@ function weightedRating(book, mean, m = 300) {
 }
 
 const byWeighted = (mean) => (a, b) => weightedRating(b, mean) - weightedRating(a, mean)
-const POPULAR_REASON = { kind: 'popular', text: 'Популярно у читателей' }
+const POPULAR_REASON = { kind: 'popular' }
 
 function profileOf(account, byId) {
   if (!account) return { liked: [], sections: [], excluded: new Set() }
@@ -277,20 +276,19 @@ function profileOf(account, byId) {
   return { liked, sections, excluded }
 }
 
-function reasonFor(book, profile, { detailed = false } = {}) {
+// Причины — как будут приходить от ML-сервиса через бэкенд (3.8): тип и книга-зерно / раздел, без готового
+// текста — его собирает фронтенд (lib/reasons.js). Правила моков грубые, лишь бы встречались все типы
+const seedOf = ({ id, title, titleRu, author, authorRu }) => ({ id, title, titleRu, author, authorRu })
+
+function reasonFor(book, profile) {
+  const inTopics = profile.sections.includes(book.section)
+  if (inTopics && book.year >= 2021) return { kind: 'new' }
+  const sameAuthor = profile.liked.find((l) => l.id !== book.id && l.author && l.author === book.author)
+  if (sameAuthor) return { kind: 'same_author', seed: seedOf(sameAuthor) }
+  if (inTopics && book.year >= 2018 && book.ratingsCount >= 3000) return { kind: 'trending', section: book.section }
   const twin = profile.liked.find((l) => l.id !== book.id && l.subsection && l.subsection === book.subsection)
-  if (twin) {
-    const text = `Похожа на «${shortTitle(twin.title)}»`
-    return { kind: 'similar', text: detailed ? `${text} — она вам понравилась` : text, seedId: twin.id }
-  }
-  if (profile.sections.includes(book.section)) {
-    const section = sectionLabel(book.section)
-    const text = detailed
-      ? `Из вашей темы «${section}»${book.rating != null ? `, читатели оценивают её в ${book.rating.toFixed(1)}` : ''}`
-      : `Ваша тема: ${section}`
-    return { kind: 'topic', text }
-  }
-  return null
+  if (twin) return { kind: 'similar', seed: seedOf(twin) }
+  return inTopics ? { kind: 'topic', section: book.section } : null
 }
 
 function roundRobin(queues, limit) {
@@ -332,7 +330,7 @@ export async function getBook(id) {
   const m = account.my[id] ?? {}
   return delay({
     ...full,
-    recommendation: m.rating ? null : reasonFor(book, profileOf(account, byId), { detailed: true }),
+    recommendation: m.rating ? null : reasonFor(book, profileOf(account, byId)),
     my: { rating: m.rating ?? null, shelf: m.shelf ?? null, hidden: Boolean(m.hidden) },
   })
 }
@@ -377,7 +375,7 @@ export async function getRecommendations({ limit = 16 } = {}) {
       .filter((b) => b.section === seed.section && !skip(b))
       .sort(byWeighted(meanRating))
       .slice(0, 12)
-      .map((book) => ({ book, reason: { kind: 'similar', text: `Похожа на «${shortTitle(seed.title)}»`, seedId: seed.id } })),
+      .map((book) => ({ book, reason: { kind: 'similar', seed: seedOf(seed) } })),
   }))
   // «Другие книги серии»: понравились 2+ книги одной серии — остальные её книги отдельным рядом
   const ru = !account.user.readingLanguages?.length || account.user.readingLanguages.includes('ru')

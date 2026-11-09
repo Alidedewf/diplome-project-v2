@@ -3,7 +3,7 @@
 // Читающий по-русски — выбрал русский или казахский без английского (как на бэкенде: казахскую аудиторию
 // русские издания тоже выручают). Только английский или английский с казахским — оригинал, как раньше.
 // Гость и тот, кто язык не выбрал, — как читающий по-русски: сайт русскоязычный, оригинал всё равно виден.
-// Казахские книги (source: 'kz') тому, кто выбрал казахский, — наоборот: крупно оригинал, под ним русское.
+// Книги на казахском (bookLanguage === 'kk') тому, кто выбрал казахский, — наоборот: крупно оригинал, под ним русское.
 
 export const READING_LANGUAGES = [
   { id: 'ru', label: 'Русский' },
@@ -21,13 +21,22 @@ export function readerOf(user) {
   return { ru: readsRussian(user), kk: Boolean(user?.readingLanguages?.includes('kk')) }
 }
 
-// Язык оригинала для lang=: каталог Amazon английский, свои книги — русские и казахские (1.5); русский — язык страницы
-export const originalLang = (book) => (book?.source === 'kz' ? 'kk' : book?.source === 'ru' ? undefined : 'en')
+// Язык оригинала своих книг (1.5): originalLanguage с бэкенда, иначе по источнику. В «казахской литературе»
+// есть и русскоязычные книги (Лукьяненко, Волков) — для них бэкенд отдаёт originalLanguage: 'ru'
+export const bookLanguage = (book) =>
+  book?.originalLanguage ?? (book?.source === 'kz' ? 'kk' : book?.source === 'ru' ? 'ru' : 'en')
+
+// Язык оригинала для lang=: каталог Amazon английский; русский — язык страницы, его не помечаем
+export const originalLang = (book) => {
+  const lang = bookLanguage(book)
+  return lang === 'ru' ? undefined : lang
+}
 
 // У своих книг (1.5) оценок Amazon нет: rating = null, ratingsCount = 0 — вместо звёзд «Оценок пока нет»
 export const hasRatings = (book) => book?.rating != null && book.ratingsCount > 0
 
-const differs = (ru, original) => ru && ru.trim() && ru.trim() !== original?.trim()
+// «Дневной Дозор» и «Дневной дозор» — одно и то же: второй строкой не показываем
+const differs = (ru, original) => ru && ru.trim() && ru.trim().toLowerCase() !== original?.trim().toLowerCase()
 
 // → { title, titleLang, originalTitle, author, authorLang, originalAuthor, originalLang };
 // original* — вторая строка (null, если показывать нечего); *Lang — для lang= основной строки, originalLang — второй.
@@ -39,7 +48,7 @@ export function bookNames(book, reader = true) {
   const hasAuthorRu = book?.author && differs(book?.authorRu, book?.author)
 
   // казахская книга для читающего по-казахски: оригинал крупно, русское — под ним
-  if (book?.source === 'kz' && kk) {
+  if (bookLanguage(book) === 'kk' && kk) {
     return {
       title: book.title,
       titleLang: lang,

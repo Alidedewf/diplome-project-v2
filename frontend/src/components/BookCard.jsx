@@ -47,7 +47,7 @@ export function BookCard({ book, reason, onOpen, className }) {
           <p className="text-xs text-muted">Оценок пока нет</p>
         )}
       </div>
-      <WhyRecommended reason={reason} compact />
+      <WhyRecommended reason={reason} book={book} compact />
     </Link>
   )
 }

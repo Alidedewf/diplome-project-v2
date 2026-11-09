@@ -5,7 +5,8 @@
 // Формы ответов (backend/README.md):
 //   Book           { id, source: 'amazon' | 'ru' | 'kz', title, titleRu?, author?, authorRu?, year?, section?, subsection?, cover?,
 //                    rating: number | null, ratingsCount, annotation }   у своих книг (ru, kz) оценок нет: rating null, ratingsCount 0
-//   Reason         { kind: 'similar' | 'topic' | 'popular' | 'series', text, seedId? }
+//   Reason         { kind: 'similar' | 'same_author' | 'trending' | 'new' | 'topic' | 'popular' | 'series', text?, seed?: Book, section?, seedId? }
+//                    text есть — показываем как есть; нет — фронтенд собирает по kind (lib/reasons.js)
 //   User           { id, email, name, createdAt, onboardingCompleted, readingLanguages: ('ru' | 'kk' | 'en')[] }
 //   register / login       → { token, user }; getMe → User
 //   getSections()          → [{ name, booksCount }]

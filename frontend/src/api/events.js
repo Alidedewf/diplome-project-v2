@@ -38,4 +38,4 @@ if (typeof window !== 'undefined') {
 
 // place — где была рекомендация: for_you, because_you_liked, similar
 export const trackRecClick = (book, reason, place) =>
-  track({ type: 'rec_click', bookId: book.id, payload: { kind: reason?.kind ?? null, seedId: reason?.seedId ?? null, place } })
+  track({ type: 'rec_click', bookId: book.id, payload: { kind: reason?.kind ?? null, seedId: reason?.seedId ?? reason?.seed?.id ?? null, place } })
