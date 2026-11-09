@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { AUTHOR_BOOKS, BOOKS } from './fixtures.js'
 import { app, registerUser } from './helpers.js'
 
-const BOOK_KEYS = ['annotation', 'author', 'authorRu', 'cover', 'id', 'rating', 'ratingsCount', 'section', 'source', 'subsection', 'title', 'titleRu', 'year']
+const BOOK_KEYS = ['annotation', 'author', 'authorRu', 'cover', 'id', 'originalLanguage', 'rating', 'ratingsCount', 'section', 'source', 'subsection', 'title', 'titleRu', 'year']
 
 describe('каталог и поиск', () => {
   it('книга в форме слоя данных фронтенда; нет книги — 404', async () => {

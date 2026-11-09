@@ -66,7 +66,9 @@ describe('векторы книг', () => {
     expect(new Set(byBook.map((r) => r.bookId))).toEqual(new Set([BOOKS[4].id, BOOKS[6].id]))
 
     const plan = await prisma.$transaction(async (tx) => {
+      // Без сортировки: на крошечной таблице с устаревшей статистикой иначе выбирался первичный ключ + сортировка
       await tx.$executeRaw`SET LOCAL enable_seqscan = off`
+      await tx.$executeRaw`SET LOCAL enable_sort = off`
       return tx.$queryRawUnsafe(`EXPLAIN SELECT book_id FROM book_embeddings WHERE model = '${MODEL}'
         ORDER BY embedding::vector(8) <=> '[1,0,0,0,0,0,0,0.1]'::vector(8) LIMIT 5`)
     })

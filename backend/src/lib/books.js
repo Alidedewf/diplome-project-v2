@@ -1,6 +1,7 @@
 // Книга в форме слоя данных фронтенда (frontend/src/api/index.js):
 //   Book { id, title, titleRu, author, authorRu, year, section, subsection, cover, rating, ratingsCount, annotation, source }
-// source — 'amazon' | 'ru' | 'kz' (свой каталог, 1.5: оценок нет — rating null, ratingsCount 0)
+// source — 'amazon' | 'ru' | 'kz' (свой каталог, 1.5: оценок нет — rating null, ratingsCount 0); originalLanguage — язык
+// оригинала своих книг ('ru' | 'kk', из Wikidata P407), у книг Amazon — null
 // titleRu / authorRu — из Wikidata (2.8), чаще всего null. На странице книги (full) ещё annotationRu,
 // annotationSource ('wikipedia' | 'mt' | null) и annotationUrl (статья Википедии)
 import { Prisma, prisma } from '../db.js'
@@ -16,7 +17,7 @@ export const bookColumns = (alias = 'b', { full = false } = {}) => {
     ? Prisma.sql`${t}.annotation, ${t}.annotation_ru, ${t}.annotation_source, ${t}.annotation_url`
     : Prisma.sql`left(${t}.annotation, ${LIST_ANNOTATION_MAX + 1}) AS annotation`
   return Prisma.sql`${t}.id, ${t}.title, ${t}.author, ${t}.year, ${t}.section, ${t}.category, ${t}.subsection,
-    ${t}.cover, ${t}.rating, ${t}.ratings_count, ${annotation}, ${t}.title_ru, ${t}.author_ru, ${t}.ru_known, ${t}.source`
+    ${t}.cover, ${t}.rating, ${t}.ratings_count, ${annotation}, ${t}.title_ru, ${t}.author_ru, ${t}.ru_known, ${t}.source, ${t}.language`
 }
 
 function cutAnnotation(text) {
@@ -41,6 +42,7 @@ export function toBook(row, { full = false } = {}) {
     ratingsCount: row.ratings_count ?? row.ratingsCount,
     annotation: full ? row.annotation : cutAnnotation(row.annotation),
     source: row.source ?? 'amazon',
+    originalLanguage: (row.source ?? 'amazon') === 'amazon' ? null : ({ Kazakh: 'kk', Russian: 'ru' }[row.language] ?? null),
     ...(full && {
       annotationRu: row.annotation_ru ?? row.annotationRu ?? null,
       annotationSource: row.annotation_source ?? row.annotationSource ?? null,

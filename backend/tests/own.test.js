@@ -4,14 +4,14 @@ import { prisma } from '../src/db.js'
 import { app, registerUser } from './helpers.js'
 
 // Свой каталог (1.5): русские и казахские книги из Wikidata, без оценок, с известностью (fame)
-const own = { category: 'Literature & Fiction', section: 'Literature & Fiction', subsection: 'World Literature', ratingsCount: 0, rating: null, weightedRating: 4, ruKnown: true }
+const own = { language: 'Russian', category: 'Literature & Fiction', section: 'Literature & Fiction', subsection: 'World Literature', ratingsCount: 0, rating: null, weightedRating: 4, ruKnown: true }
 const BOOKS = [
   { id: 'wd:Q100001', title: 'Мастер и Маргарита', author: 'Михаил Булгаков', year: 1967, fame: 90, source: 'ru', wikidataQid: 'Q100001' },
   { id: 'wd:Q100002', title: 'Белая гвардия', author: 'Михаил Булгаков', year: 1925, fame: 40, source: 'ru', wikidataQid: 'Q100002' },
   { id: 'wd:Q100003', title: 'Пикник на обочине', author: 'Стругацкие', year: 1972, fame: 60, source: 'ru', wikidataQid: 'Q100003',
     section: 'Science Fiction & Fantasy', category: 'Science Fiction & Fantasy', subsection: null },
   { id: 'wd:Q100004', title: 'Абай жолы', titleRu: 'Путь Абая', author: 'Мұхтар Әуезов', authorRu: 'Мухтар Ауэзов', year: 1942, fame: 30,
-    source: 'kz', wikidataQid: 'Q100004', annotation: 'Роман-эпопея.', annotationRu: 'Роман-эпопея.', annotationSource: 'wikipedia',
+    source: 'kz', language: 'Kazakh', wikidataQid: 'Q100004', annotation: 'Роман-эпопея.', annotationRu: 'Роман-эпопея.', annotationSource: 'wikipedia',
     annotationUrl: 'https://ru.wikipedia.org/wiki/Путь_Абая' },
 ].map((b) => ({ ...own, ...b }))
 const [master, guard, picnic, abai] = BOOKS
@@ -26,10 +26,12 @@ afterAll(async () => {
 describe('свой каталог русских и казахских книг', () => {
   it('книга — с источником; у своих оценок нет; казахская — оригинал и русское название', async () => {
     const card = (await request(app).get(`/api/books/${encodeURIComponent(abai.id)}`).expect(200)).body
-    expect(card).toMatchObject({ source: 'kz', title: 'Абай жолы', titleRu: 'Путь Абая', author: 'Мұхтар Әуезов', authorRu: 'Мухтар Ауэзов',
+    expect(card).toMatchObject({ source: 'kz', originalLanguage: 'kk', title: 'Абай жолы', titleRu: 'Путь Абая', author: 'Мұхтар Әуезов', authorRu: 'Мухтар Ауэзов',
       rating: null, ratingsCount: 0, annotationRu: 'Роман-эпопея.', annotationSource: 'wikipedia' })
     const amazon = (await request(app).get('/api/books').query({ limit: 1, section: 'Mystery, Thriller & Suspense' }).expect(200)).body.items[0]
-    expect(amazon.source).toBe('amazon')
+    expect(amazon).toMatchObject({ source: 'amazon', originalLanguage: null })
+    const ru = (await request(app).get(`/api/books/${encodeURIComponent(master.id)}`).expect(200)).body
+    expect(ru.originalLanguage).toBe('ru')
   })
 
   it('GET /books?source= — по известности; неизвестный источник — 400', async () => {

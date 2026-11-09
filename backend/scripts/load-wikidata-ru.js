@@ -156,7 +156,8 @@ export async function fetchExtracts(titles, store, save, api = WIKI_API) {
 
 // Начало статьи: первые абзацы, пока не наберётся ~WIKI_MAX_CHARS (не меньше одного)
 export function wikiIntro(extract) {
-  const paragraphs = extract.split(/\n+/).map((p) => p.trim()).filter((p) => p.length > 40)
+  // Знаки ударения Википедии («Слова́ назида́ния») снимаем
+  const paragraphs = extract.replace(/\u0301/g, '').split(/\n+/).map((p) => p.trim()).filter((p) => p.length > 40)
   const out = []
   for (const p of paragraphs) {
     if (out.length && out.join(' ').length + p.length > WIKI_MAX_CHARS) break
@@ -195,7 +196,7 @@ export async function sparql(query) {
 }
 
 // Спросить в Wikidata всё, чего нет в кэше; ответы раскладываются по ключам (имя / название), пустые — тоже
-export async function fetchMissing({ keys, store, query, keyOf, toCandidate, label, save, batch: size = BATCH }) {
+export async function fetchMissing({ keys, store, query, keyOf, toCandidate, label, save, batch: size = BATCH, saveEvery = 10 }) {
   const missing = keys.filter((k) => !(k in store))
   if (!missing.length) return 0
   console.log(`${label}: спрашиваем ${missing.length} из ${keys.length}`)
@@ -216,7 +217,7 @@ export async function fetchMissing({ keys, store, query, keyOf, toCandidate, lab
     for (const k of batch) store[k] = []
     for (const r of rows) store[keyOf(r)]?.push(toCandidate(r))
     done += batch.length
-    if (++batches % 10 === 0) {
+    if (++batches % saveEvery === 0) {
       save()
       const min = (Date.now() - started) / 60000
       console.log(`  ${done} / ${missing.length}, ${min.toFixed(1)} мин`)
