@@ -84,6 +84,19 @@ describe('свой каталог по вкусу', () => {
     await prisma.book.deleteMany({ where: { id: { in: [near.id, far.id] } } })
   })
 
+  it('похожие своей книги — свой каталог и Amazon через одного; у книги Amazon читающему по-русски — свои на 4-м и 8-м месте', async () => {
+    const own = await similar(near)
+    expect(own[0]).toMatchObject({ id: far.id, source: 'ru' })
+    expect(own[1]).toMatchObject({ id: fantasy3.id, source: 'amazon' })
+
+    const u = await registerUser()
+    const amazon = await similar(fantasy3, u.auth) // язык не выбран — читающий по-русски
+    expect(amazon[3].id).toBe(near.id)
+    expect(amazon[7].id).toBe(far.id)
+    await request(app).patch('/api/me/profile').set(u.auth).send({ readingLanguages: ['en'] }).expect(200)
+    expect((await similar(fantasy3, u.auth)).some((b) => b.source !== 'amazon')).toBe(false)
+  })
+
   it('после входа — ближе к понравившимся книгам; гостю — по известности', async () => {
     const u = await registerUser()
     await request(app).put(`/api/me/ratings/${fantasy3.id}`).set(u.auth).send({ value: 5 }).expect(200)

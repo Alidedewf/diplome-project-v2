@@ -6,7 +6,7 @@ import { config } from '../config.js'
 import { Prisma, prisma } from '../db.js'
 import { prefersRussian } from '../lib/auth.js'
 import { bookColumns, capPerAuthor, editionKey, littleKids, oneEdition, shortTitle, titleWords, toBook } from '../lib/books.js'
-import { byTaste, nearestBooksTo, semanticSearch } from '../lib/embeddings.js'
+import { byTaste, nearestBooksTo, nearestExactTo, semanticSearch } from '../lib/embeddings.js'
 import { sectionLabel } from '../lib/sections.js'
 import { embedQuery } from './ml.js'
 
@@ -208,7 +208,8 @@ async function similarByVector(seed, { limit, profile, skip, ru }) {
     const rows = await nearestBooksTo(seed.id, {
       model: config.embeddingModel,
       limit: SIMILAR_CANDIDATES,
-      where: Prisma.sql`AND NOT (b.id = ANY(${skip}::varchar[])) ${profileFilter(profile)}`,
+      // Только книги Amazon: свой каталог — отдельным поиском (ownNeighbours)
+      where: Prisma.sql`AND b.source = 'amazon' AND NOT (b.id = ANY(${skip}::varchar[])) ${profileFilter(profile)}`,
       columns: bookColumns('b'),
     })
     const boost = ru ? RU_SIMILAR_BOOST : 0
@@ -243,9 +244,56 @@ async function similarByCategory(seed, { limit, profile, skip, ru }) {
   return capPerAuthor(rows.map((r) => toBook(r))).slice(0, limit)
 }
 
+// Свой каталог (1.5): векторы e5 кучкуются по языку — русские тексты своих книг близки друг к другу (~0,80–0,82) при
+// любой теме, а близость «своя — Amazon» на другой шкале. Поэтому соседи своей книги ищутся отдельно в своём каталоге
+// и в Amazon и сливаются по местам (через одного), а не по близости; книге Amazon у читающих по-русски — до OWN_IN_AMAZON
+// своих книг на места OWN_SLOTS, по их месту в поиске по своему каталогу
+const OWN_IN_AMAZON = 2
+const OWN_SLOTS = [3, 7]
+const isOwn = (book) => book.source && book.source !== 'amazon'
+async function ownNeighbours(seed, { limit, profile, skip }) {
+  try {
+    const rows = await nearestExactTo(seed.id, {
+      model: config.embeddingModel,
+      limit,
+      where: Prisma.sql`AND b.source IN ('ru', 'kz') AND NOT (b.id = ANY(${skip}::varchar[])) ${profileFilter(profile)}`,
+      columns: bookColumns('b'),
+    })
+    return rows.map((r) => toBook(r))
+  } catch (err) {
+    console.warn(`Похожие из своего каталога не получились (${err.message.split('\n')[0]})`)
+    return []
+  }
+}
+function interleave(a, b) {
+  const out = []
+  for (let i = 0; i < Math.max(a.length, b.length); i++) out.push(...[a[i], b[i]].filter(Boolean))
+  return out
+}
+
 // Сначала по вектору; не хватило (нет вектора, сбой, всё отфильтровано) — добор по разделу
 async function similarTo(seed, { limit, profile, skip = [], ru = profile?.ru }) {
-  const byVector = await similarByVector(seed, { limit, profile, skip, ru })
+  let byVector
+  if (isOwn(seed)) {
+    const [own, amazon] = await Promise.all([
+      ownNeighbours(seed, { limit: limit * 2, profile, skip }),
+      similarByVector(seed, { limit: limit * 2, profile, skip, ru }),
+    ])
+    byVector = diversify(seed, interleave(own, amazon), limit)
+  } else {
+    byVector = await similarByVector(seed, { limit, profile, skip, ru })
+    if (ru && byVector.length) {
+        // Английский текст с русскими сравнивается плохо («Мастер и Маргарита» → «Метро 2034»): книги того же автора
+      // (по фамилии) — вперёд
+      const surname = (name) => (name ?? '').toLowerCase().split(/[\s,]+/).filter(Boolean).pop() ?? ''
+      const seedSurname = surname(seed.authorRu)
+      const candidates = await ownNeighbours(seed, { limit: 20, profile, skip })
+      const sameAuthor = (b) => seedSurname && surname(b.author) === seedSurname
+      const own = [...candidates.filter(sameAuthor), ...candidates.filter((b) => !sameAuthor(b))].slice(0, OWN_IN_AMAZON)
+      own.forEach((book, i) => byVector.splice(Math.min(OWN_SLOTS[i], byVector.length), 0, book))
+      byVector = byVector.slice(0, limit)
+    }
+  }
   if (byVector.length >= limit) return byVector
   const taken = new Set(byVector.map((b) => b.id))
   const fallback = (await similarByCategory(seed, { limit, profile, skip, ru })).filter((b) => !taken.has(b.id))

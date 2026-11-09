@@ -111,6 +111,23 @@ export async function nearestBooksTo(bookId, { model, limit, where = Prisma.empt
   return (await vectorPool.query(sql.text, sql.values)).rows
 }
 
+// Ближайшие к книге bookId точным перебором — для небольших выборок (свой каталог, ~300 книг): через HNSW с таким фильтром
+// итеративный обход прошёл бы почти весь граф. «+ 0» в ORDER BY — чтобы планировщик не брал индекс
+export async function nearestExactTo(bookId, { model, where = Prisma.empty, columns, limit }) {
+  const dim = await modelDimCached(model)
+  if (!dim) return []
+  const typ = Prisma.raw(`vector(${dim})`)
+  const seed = Prisma.sql`(SELECT embedding::${typ} FROM book_embeddings WHERE model = ${model} AND book_id = ${bookId})`
+  // Сначала книги выборки (where — по индексу books), к ним — векторы по первичному ключу; MATERIALIZED — чтобы
+  // планировщик не начал с перебора всех векторов модели
+  const sql = Prisma.sql`
+    WITH pool AS MATERIALIZED (SELECT ${columns} FROM books b WHERE b.id <> ${bookId} ${where})
+    SELECT pool.*, 1 - (e.embedding::${typ} <=> ${seed}) AS similarity
+    FROM pool JOIN book_embeddings e ON e.model = ${model} AND e.book_id = pool.id
+    ORDER BY (e.embedding::${typ} <=> ${seed}) + 0 LIMIT ${limit}`
+  return (await vectorPool.query(sql.text, sql.values)).rows.filter((r) => r.similarity != null)
+}
+
 // Книги по близости к вкусу — среднему вектору понравившихся (likedIds), точным перебором: для небольших выборок вроде
 // своего каталога (where — условия на books b). Книги без вектора — в конце, порядок среди них — order. null — у
 // понравившихся или у самих книг векторов этой модели нет (тогда вызывающий сортирует по-своему)
