@@ -12,6 +12,7 @@
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -33,7 +34,9 @@ USER = "u"
 PSEUDO_RATING = {"like": 5, "read": 3, "want": 3}
 EXCLUDE_ONLY = {"dislike", "hide"}
 
-# Признаки → тип объяснения (3.8): берётся группа с наибольшим вкладом SHAP среди тех, чьё условие выполнено
+# Признаки → тип объяснения (3.8). Подпись — только по группе с положительным вкладом SHAP и выполненным условием;
+# сначала личные (PERSONAL: «похожа на», «тот же автор»), остальные — только если личного вклада нет; внутри уровня —
+# по величине вклада. Ни одна группа не тянет книгу вверх — подписи нет (неправдивую не показываем).
 REASON_GROUPS = {
     "similar": ["knn_score", "knn_rank", "als_score", "als_rank", "als_pair", "tfidf_score", "tfidf_rank", "tfidf_sim",
                 "e5_score", "e5_rank", "e5_sim", "n_sources"],
@@ -42,6 +45,7 @@ REASON_GROUPS = {
     "new": ["i_age"],
     "topics": ["section_share", "subsection_share", "section"],
 }
+PERSONAL = ("similar", "author")
 
 
 class Recommender:
@@ -71,13 +75,20 @@ class Recommender:
         self.allowed = np.load(path / "allowed.npy")
         self.X_tfidf = sp.load_npz(path / "tfidf.npz").tocsr()
         self.E5 = np.asarray(catalog(self.meta["e5"]), dtype=np.float32)
-        self.ctx = {"X_tfidf": self.X_tfidf, "E5": self.E5, "ids_all": self.ids_all}
+        self.meta_books = self.books.set_index("parent_asin")[["author", "year", "cat2", "cat3"]]
+        self.ctx = {"X_tfidf": self.X_tfidf, "E5": self.E5, "ids_all": self.ids_all,
+                    "item_index": self.catalog_index, "meta": self.meta_books}
         self.author = self.books.set_index("parent_asin")["author"]
         self.section = self.books.set_index("parent_asin")["cat2"]
+
+        # Content-списки TF-IDF и e5 независимы и упираются в память, а не в Python (numpy/scipy отпускают GIL) —
+        # считаются параллельно, запрос ждёт более долгий из двух
+        self.pool = ThreadPoolExecutor(max_workers=2)
 
         self.ranker = CatBoostRanker()
         self.ranker.load_model(str(path / "ranker.cbm"))
         self.cols = list(self.ranker.feature_names_)
+        self.shap_calc = "Approximate"
 
     # ——— История ———
 
@@ -96,7 +107,7 @@ class Recommender:
             at = pd.Timestamp(e["at"]) if e.get("at") else ref - pd.Timedelta(seconds=1)
             rows.append((book, r, at.tz_convert(None) if at.tzinfo else at))
         h = pd.DataFrame(rows, columns=[I, "rating", DT])
-        h = h[h[I].isin(self.catalog_index)]
+        h = h[self.catalog_index.get_indexer(h[I]) >= 0]
         # Одна книга — последнее событие
         h = h.sort_values(DT, kind="stable").drop_duplicates(I, keep="last").reset_index(drop=True)
         h.insert(0, U, USER)
@@ -156,15 +167,24 @@ class Recommender:
 
         viewed_idx = self.catalog_index.get_indexer(list(viewed))
         viewed_idx = viewed_idx[viewed_idx >= 0]
+
+        def tfidf():
+            t = time.perf_counter()
+            rows = self._profile_rows(hist, self.n_profile["tfidf"])
+            # Профиль — плотный вектор: разреженная матрица × плотный вектор в разы быстрее, чем × разреженный
+            prof = normalize(np.asarray(self.X_tfidf[rows].mean(axis=0), dtype=np.float32)).ravel()
+            return self._content_list(self.X_tfidf @ prof, viewed_idx), time.perf_counter() - t
+
+        def e5():
+            t = time.perf_counter()
+            rows = self._profile_rows(hist, self.n_profile["e5"])
+            return self._content_list(self.E5 @ self.E5[rows].mean(axis=0), viewed_idx), time.perf_counter() - t
+
         t = time.perf_counter()
-        rows = self._profile_rows(hist, self.n_profile["tfidf"])
-        prof = normalize(sp.csr_matrix(self.X_tfidf[rows].mean(axis=0)))
-        out["tfidf"] = self._content_list((self.X_tfidf @ prof.T).toarray().ravel(), viewed_idx)
-        timing["tfidf"] = time.perf_counter() - t
-        t = time.perf_counter()
-        rows = self._profile_rows(hist, self.n_profile["e5"])
-        out["e5"] = self._content_list(self.E5 @ self.E5[rows].mean(axis=0), viewed_idx)
-        timing["e5"] = time.perf_counter() - t
+        jobs = {"tfidf": self.pool.submit(tfidf), "e5": self.pool.submit(e5)}
+        for name, job in jobs.items():
+            out[name], timing[name] = job.result()
+        timing["content"] = time.perf_counter() - t   # оба параллельно — это и входит в общее время
         return out, uvec, timing
 
     # ——— Рекомендации ———
@@ -213,8 +233,11 @@ class Recommender:
     # ——— Объяснения «почему» (S3) ———
 
     def reasons(self, top: pd.DataFrame, hist: pd.DataFrame) -> dict[str, list[dict]]:
+        # Приближённый SHAP (вклад по пути документа в каждом дереве): 10 мс против 77 у точного на 10 книгах; для
+        # выбора типа подписи точность хватает (совпадение с точным — в check.py)
         shap = self.ranker.get_feature_importance(
-            Pool(top[self.cols], cat_features=[c for c in CAT if c in self.cols]), type="ShapValues")[:, :-1]
+            Pool(top[self.cols], cat_features=[c for c in CAT if c in self.cols]), type="ShapValues",
+            shap_calc_type=self.shap_calc)[:, :-1]
         contrib = pd.DataFrame(shap, columns=self.cols)
         groups = {g: contrib[[c for c in cols if c in self.cols]].sum(axis=1).to_numpy() for g, cols in REASON_GROUPS.items()}
         liked = hist[hist["rating"] >= HIT_RATING]
@@ -229,9 +252,11 @@ class Recommender:
                 "new": pd.notna(r["i_age"]) and r["i_age"] <= 1,
                 "topics": r["section_share"] > 0,
             }
-            ranked = sorted(groups, key=lambda g: -groups[g][j])
-            g = next((g for g in ranked if ok[g] and groups[g][j] > 0), "similar")
-            if g == "similar":
+            ranked = sorted(groups, key=lambda g: (g not in PERSONAL, -groups[g][j]))
+            g = next((g for g in ranked if ok[g] and groups[g][j] > 0), None)
+            if g is None:
+                out[book] = []
+            elif g == "similar":
                 out[book] = [{"type": "similar", "bookId": self._closest(book, base)}]
             elif g == "author":
                 same = hist[hist[I].map(self.author) == r["author"]]

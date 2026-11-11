@@ -23,10 +23,14 @@ from cf.models import SEED
 from eval.data import load_ratings, subsample_users, time_split
 from eval.metrics import eval_users, evaluate
 from hybrid import blend, candidates, ranker
-from serve.build import lists_for
+from serve.build import KNN_K, lists_for
 from serve.recommender import Recommender
 
 U, I = Columns.User, Columns.Item
+
+
+def kind(reasons: list[dict]) -> str:
+    return reasons[0]["type"] if reasons else "без подписи"
 
 
 def events_of(tr: pd.DataFrame) -> dict[str, list[dict]]:
@@ -60,6 +64,7 @@ def main():
     import optuna
     from cf.tune import STORAGE, best_params
     best = {k: best_params(optuna.load_study(study_name=k, storage=f"sqlite:///{STORAGE}")) for k in ["knn", "als"]}
+    best["knn"]["K"] = KNN_K   # как в артефактах
     t0 = time.time()
     lists, _, als = lists_for(train_full, users, best, rec.ctx, rec.allowed)
     c = candidates.build(lists, train_full, users, rec.books, rec.ctx, cutoff, rec.n_profile, als=als,
@@ -69,11 +74,12 @@ def main():
 
     # Сервис — по одному пользователю
     ev = events_of(hist)
-    rows, times = [], []
+    rows, times, why = [], [], {}
     for u in users:
         out = rec.recommend(ev[u], n=10, explain=10)
         times.append(out["timing_ms"])
         rows += [(u, x["bookId"], k + 1) for k, x in enumerate(out["items"])]
+        why[u] = [x["reasons"] for x in out["items"]]
     online = pd.DataFrame(rows, columns=[U, I, Columns.Rank])
 
     b = batch.groupby(U)[I].apply(list)
@@ -84,6 +90,19 @@ def main():
     for name, reco in [("пакетный", batch), ("сервис", online)]:
         t, _ = evaluate(reco, train_full, test, users)
         print(f"NDCG@10 {name}: " + " / ".join(f"{s} {v:.4f}" for s, v in zip(t["разрез"], t["NDCG@10"])))
+    # Подписи «почему»: приближённый SHAP (сервис) против точного — на 100 пользователях
+    calc, rec.shap_calc = rec.shap_calc, "Regular"
+    same_type = same_all = n = 0
+    for u in users[:100]:
+        exact = [x["reasons"] for x in rec.recommend(ev[u], n=10, explain=10)["items"]]
+        for a_, b_ in zip(why[u], exact):
+            n += 1
+            same_type += kind(a_) == kind(b_)
+            same_all += a_ == b_
+    rec.shap_calc = calc
+    print(f"Подписи, приближённый SHAP против точного: тот же тип у {same_type / n:.1%}, та же подпись у {same_all / n:.1%}")
+    types = pd.Series([kind(r) for u in users for r in why[u]]).value_counts(normalize=True)
+    print("Типы подписей: " + ", ".join(f"{k} {v:.0%}" for k, v in types.items()))
     tm = pd.DataFrame(times)
     print("Время сервиса, мс (медиана / 90-й перцентиль):")
     print(pd.DataFrame({"медиана": tm.median(), "p90": tm.quantile(0.9)}).round(1).to_string())

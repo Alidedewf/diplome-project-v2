@@ -52,7 +52,8 @@ def pair_scores(vectors, item_ids, profile_from: pd.DataFrame, users, items, chu
 
     Профиль — как в recommend (по оценкам profile_from); книги не из каталога — NaN.
     """
-    item_index = pd.Index(item_ids)
+    # Готовый pd.Index (сайт) не строится заново: хеш-таблица по 400 тыс. строк — ~50 мс на каждый вызов
+    item_index = item_ids if isinstance(item_ids, pd.Index) else pd.Index(item_ids)
     users, items = np.asarray(users, dtype=str), np.asarray(items, dtype=str)
     uniq, u_idx = np.unique(users, return_inverse=True)
     profiles = _profile_weights(profile_from, uniq, item_index) @ vectors

@@ -59,7 +59,8 @@ def build(lists: dict[str, pd.DataFrame], train: pd.DataFrame, users, books: pd.
     """Таблица кандидатов с признаками.
 
     lists — топ-k моделей (user_id, item_id, score, rank), ключи — имена источников; в кандидаты идут sources.
-    books — parent_asin, author, year, cat2, cat3; ctx — X_tfidf, E5, ids_all (векторы content-моделей).
+    books — parent_asin, author, year, cat2, cat3; ctx — X_tfidf, E5, ids_all (векторы content-моделей), по желанию
+    item_index (pd.Index по ids_all) и meta (books по parent_asin) — готовые, чтобы не строить их на каждый вызов (сайт).
     als — (модель, Dataset) для балла ALS любой пары или функция (users, items) → баллы (сайт: вектор пользователя
     после fold-in). stats — готовая статистика книг item_stats(...) (сайт: train — только история пользователя, а
     статистика книг посчитана при сборке по всем оценкам). Пользователи — строки (str).
@@ -75,7 +76,8 @@ def build(lists: dict[str, pd.DataFrame], train: pd.DataFrame, users, books: pd.
     # Баллы content-моделей и ALS для любой пары
     for s, key in [("tfidf", "X_tfidf"), ("e5", "E5")]:
         prof = truncate_history(train, users, n_profile[s])
-        cands[f"{s}_sim"] = pair_scores(ctx[key], ctx["ids_all"], prof, users_of(cands), cands[I].to_numpy())
+        cands[f"{s}_sim"] = pair_scores(ctx[key], ctx.get("item_index", ctx["ids_all"]), prof, users_of(cands),
+                                        cands[I].to_numpy())
     if callable(als):
         cands["als_pair"] = als(users_of(cands), cands[I].to_numpy())
     elif als is not None:
@@ -83,18 +85,18 @@ def build(lists: dict[str, pd.DataFrame], train: pd.DataFrame, users, books: pd.
 
     # Книга: статистика по обучению, год издания, раздел
     stats, c = item_stats(train, cutoff, m_wr) if stats is None else stats
-    cands = cands.join(stats, on=I)
+    cands = _attach(cands, stats)
     cands["i_n"] = cands["i_n"].fillna(0)
     cands["i_n_year"] = cands["i_n_year"].fillna(0)
     cands["i_wr"] = cands["i_wr"].fillna(c)
-    meta = books.set_index("parent_asin")[["author", "year", "cat2", "cat3"]]
-    cands = cands.join(meta, on=I)
+    meta = ctx["meta"] if "meta" in ctx else books.set_index("parent_asin")[["author", "year", "cat2", "cat3"]]
+    cands = _attach(cands, meta)
     cands["i_age"] = (cutoff.year - cands["year"].astype("float32")).clip(lower=-1)
 
     # Пользователь и совпадение с историей
     cands = cands.join(user_stats(train, users, cutoff), on=U)
     hist = pd.DataFrame({U: train[U].astype(str), I: train[I].astype(str), "dt": train[Columns.Datetime]})
-    hist = hist[hist[U].isin(set(users))].join(meta, on=I)
+    hist = _attach(hist[hist[U].isin(set(users))].reset_index(drop=True), meta)
     last5 = hist.sort_values("dt", kind="stable").groupby(U).tail(5)
     cands["author_cnt"] = _history_share(hist, cands, "author", "n")
     cands["author_last5"] = _history_share(last5, cands, "author", "n")
@@ -102,6 +104,14 @@ def build(lists: dict[str, pd.DataFrame], train: pd.DataFrame, users, books: pd.
     cands["subsection_share"] = _history_share(hist, cands, "cat3", "n") / cands["u_n"]
     cands["section"] = cands["cat2"].fillna("—").astype(str)
     return cands.drop(columns=["year", "cat2", "cat3"])
+
+
+def _attach(df: pd.DataFrame, table: pd.DataFrame) -> pd.DataFrame:
+    """df.join(table, on=item_id) через reindex: join заново разбирает весь индекс table (400 тыс. книг) на каждый
+    вызов, reindex берёт готовую хеш-таблицу индекса. Результат тот же (left join, порядок строк df)."""
+    right = table.reindex(df[I].to_numpy())
+    right.index = df.index
+    return pd.concat([df, right], axis=1)
 
 
 def users_of(cands: pd.DataFrame) -> np.ndarray:

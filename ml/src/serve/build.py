@@ -52,6 +52,7 @@ SOURCES = ["knn", "tfidf", "e5", "als"]  # E3: ALS добавляет +34% по�
 TREES = 389                         # E3, «известные на дату»
 M_WR = 20.0
 N_NEIGHBORS = 20
+KNN_K = 100   # ablation.py: K = 100 вместо подобранных 565 — разница в пределах ДИ, матрица сходства в ~5 раз меньше
 
 
 def neighbors(sim: sp.csr_matrix, items: np.ndarray, skip: set[str], k: int = N_NEIGHBORS) -> pd.DataFrame:
@@ -110,6 +111,7 @@ def main():
     X_tfidf, _ = tfidf_vectors(books["text"])
     ctx = {"X_tfidf": X_tfidf, "E5": np.asarray(catalog("e5-base")), "ids_all": ids_all}
     best = {k: best_params(optuna.load_study(study_name=k, storage=f"sqlite:///{STORAGE}")) for k in ["knn", "als"]}
+    best["knn"]["K"] = KNN_K
     log("каталог и векторы загружены")
 
     # 1. Ранжировщик — на годе перед датой (как обучение на валидации в E3)
