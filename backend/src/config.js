@@ -19,6 +19,8 @@ export const config = {
   // ML-сервис (решения.md 3.8): эмбеддинг поискового запроса. Не отвечает за mlTimeoutMs — поиск без смысловой части
   mlServiceUrl: process.env.ML_SERVICE_URL ?? 'http://127.0.0.1:8000',
   mlTimeoutMs: Number(process.env.ML_TIMEOUT_MS ?? 1500),
+  // Лента «Для вас» (POST /recommend, ~0,2–0,3 с): не ответил за столько — лента на правилах
+  mlRecommendTimeoutMs: Number(process.env.ML_RECOMMEND_TIMEOUT_MS ?? 2000),
   // Векторы книг для «похожих» и онбординга (без ML-сервиса — соседи берутся прямо из pgvector)
   embeddingModel: process.env.EMBEDDING_MODEL ?? 'intfloat/multilingual-e5-base',
 }

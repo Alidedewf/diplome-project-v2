@@ -259,3 +259,15 @@ model BookEmbedding {
   @@index([bookId])
   @@map("book_embeddings")
 }
+
+// Соседи книги по ItemKNN (3.8, 4.11) — для «Похожих»: топ-20 из сборки ML-сервиса, rank 1 — ближайший.
+// Без внешних ключей: перезаливается целиком (scripts/load-item-neighbors.js), при чтении соединяется с books
+model ItemNeighbor {
+  bookId     String @map("book_id") @db.VarChar(16)
+  rank       Int    @db.SmallInt
+  neighborId String @map("neighbor_id") @db.VarChar(16)
+  score      Float  @db.Real
+
+  @@id([bookId, rank])
+  @@map("item_neighbors")
+}

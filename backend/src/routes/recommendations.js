@@ -1,4 +1,4 @@
-// Рекомендации и онбординг (2.3, 2.4). Пока ML-сервиса нет — заглушки из services/recommender.js
+// Рекомендации и онбординг (2.3, 2.4, 3.8): services/recommender.js — «Для вас» из ML-сервиса, без него — правила
 import { Router } from 'express'
 import { z } from 'zod'
 import { prisma } from '../db.js'

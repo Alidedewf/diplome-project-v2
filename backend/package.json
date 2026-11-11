@@ -13,6 +13,7 @@
     "load:wikidata-ru": "node scripts/load-wikidata-ru.js",
     "load:annotations-ru": "node scripts/load-annotations-ru.js",
     "load:own-books": "node scripts/load-own-books.js",
+    "load:item-neighbors": "node scripts/load-item-neighbors.js",
     "test": "vitest run"
   },
   "dependencies": {

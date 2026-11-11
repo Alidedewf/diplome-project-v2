@@ -1,14 +1,14 @@
-// Рекомендации (решения.md, 3.3, 3.8 и 4.2): популярное в темах пользователя; похожие книги — соседи по вектору
-// (content-модель, e5, pgvector), без вектора — по разделу/подразделу; раунды онбординга по подразделам и по
-// описанию своими словами. Маршруты зовут только функции этого модуля — при появлении рекомендаций
-// ML-сервиса они заменяются HTTP-запросами к нему, форма ответов та же.
+// Рекомендации (решения.md, 3.3, 3.8, 4.2 и 4.11): «Для вас» — ML-сервис (POST /recommend) со своими правилами сверху,
+// без него — популярное в темах пользователя; похожие книги — соседи ItemKNN, затем по вектору (content-модель, e5,
+// pgvector), без вектора — по разделу/подразделу; раунды онбординга по подразделам и по описанию своими словами.
+// Маршруты зовут только функции этого модуля.
 import { config } from '../config.js'
 import { Prisma, prisma } from '../db.js'
 import { prefersRussian } from '../lib/auth.js'
 import { bookColumns, capPerAuthor, editionKey, littleKids, oneEdition, shortTitle, titleWords, toBook } from '../lib/books.js'
 import { byTaste, nearestBooksTo, nearestExactTo, semanticSearch } from '../lib/embeddings.js'
 import { sectionLabel } from '../lib/sections.js'
-import { embedQuery } from './ml.js'
+import { embedQuery, recommendFeed } from './ml.js'
 
 // Раунд 1 онбординга: сколько книг — ближайших к описанию своими словами (3.4)
 const DESCRIPTION_BOOKS = 4
@@ -271,7 +271,33 @@ function interleave(a, b) {
   return out
 }
 
-// Сначала по вектору; не хватило (нет вектора, сбой, всё отфильтровано) — добор по разделу
+// Соседи по ItemKNN (3.8, 4.11): «кто читал эту книгу, читал и…» — топ-20 из сборки ML-сервиса (таблица item_neighbors).
+// Точнее векторов по жанру и узнаваемее (Dune → продолжения, Кард, «Гиперион»; Roadside Picnic → «Солярис», «Метро 2033»),
+// но у книг с малым числом оценок — шум (Atomic Habits, 14 оценок в данных, → религиозные книги; у книг с 10–29 оценками
+// соседи часто из чужих разделов), поэтому только при KNN_MIN_RATINGS+ оценках и KNN_MIN_NEIGHBOURS+ соседях после
+// фильтров; иначе и для добора — векторы e5. Читающим по-русски книги ru_known — на RU_KNN_SHIFT мест выше
+const KNN_MIN_RATINGS = 30
+const KNN_MIN_NEIGHBOURS = 5
+const RU_KNN_SHIFT = 2
+async function similarByNeighbours(seed, { limit, profile, skip, ru }) {
+  if ((seed.ratingsCount ?? 0) < KNN_MIN_RATINGS) return []
+  try {
+    const rows = await prisma.$queryRaw`
+      SELECT ${bookColumns('b')}, n.rank FROM item_neighbors n JOIN books b ON b.id = n.neighbor_id
+      WHERE n.book_id = ${seed.id} AND b.source = 'amazon' AND NOT (b.id = ANY(${skip}::varchar[])) ${profileFilter(profile)}
+      ORDER BY n.rank`
+    if (rows.length < KNN_MIN_NEIGHBOURS) return []
+    const place = (r) => r.rank - (ru && r.ru_known ? RU_KNN_SHIFT : 0)
+    if (ru) rows.sort((a, b) => place(a) - place(b))
+    return diversify(seed, rows.map((r) => toBook(r)), limit)
+  } catch (err) {
+    console.warn(`Соседи ItemKNN не получились (${err.message.split('\n')[0]}) — по вектору`)
+    return []
+  }
+}
+
+// Книга Amazon — сначала соседи ItemKNN, затем по вектору; своя книга — свой каталог и Amazon по векторам через одного;
+// не хватило (нет вектора, сбой, всё отфильтровано) — добор по разделу
 async function similarTo(seed, { limit, profile, skip = [], ru = profile?.ru }) {
   let byVector
   if (isOwn(seed)) {
@@ -281,7 +307,10 @@ async function similarTo(seed, { limit, profile, skip = [], ru = profile?.ru }) 
     ])
     byVector = diversify(seed, interleave(own, amazon), limit)
   } else {
-    byVector = await similarByVector(seed, { limit, profile, skip, ru })
+    byVector = await similarByNeighbours(seed, { limit, profile, skip, ru })
+    if (byVector.length < limit) {
+      byVector = diversify(seed, [...byVector, ...await similarByVector(seed, { limit, profile, skip, ru })], limit)
+    }
     if (ru && byVector.length) {
         // Английский текст с русскими сравнивается плохо («Мастер и Маргарита» → «Метро 2034»): книги того же автора
       // (по фамилии) — вперёд
@@ -425,12 +454,121 @@ async function localRows(profile) {
   return rows.filter((r) => r.items.length)
 }
 
-// GET /recommendations — { forYou: [{ book, reason }], series: [{ name, seeds, items }],
-//   local: [{ source: 'ru' | 'kz', items: [{ book, reason }] }], becauseYouLiked: [{ seed, items: [{ book, reason }] }] }
+// ——— «Для вас» из ML-сервиса (3.8, 4.11) ———
+// История пользователя → POST /recommend (n = ML_FEED_N) → свои правила сверху: исключённые и темы «Это не про меня»,
+// книги для малышей (2.8), книги серий из ряда серии, другие издания понравившихся, одно издание на название,
+// читающим по-русски книги ru_known — на RU_ML_SHIFT мест выше (мягко, как в 2.8), не больше 2 книг автора.
+// Не набралось — добор лентой на правилах; сервис недоступен или нет истории — лента на правилах целиком
+// 100 — предел сервиса: у читателя серии в первых 50 книгах ML до трети — другие издания и подарочные наборы той же
+// серии (ГП: иллюстрированные, аудио, Box Set 1–7), их снимают правила ниже
+const ML_FEED_N = 100
+const ML_EVENTS_MAX = 300 // последние события (3.8)
+// Книги франшизы из рядов серий (название содержит имя серии) — сразу в exclude сервиса: так их место в первых n и
+// подписи «почему» (сервис объясняет только верхние 10) достаются другим книгам
+const ML_SERIES_EXCLUDE_MAX = 3000
+const RU_ML_SHIFT = 3
+
+// События для сервиса — одно на книгу, по старшинству: оценка → ответ онбординга («Нравится» / «Не моё») → полка
+// («Хочу» → want, «Читаю» и «Прочитал» без оценки → read). Веса — на стороне сервиса (как RATING_WEIGHTS в обучении):
+// оценка 1–5 → 0,1…1,0, like = 5, read = 3, want = 0,5 веса; dislike — только исключение. Скрытые — в exclude.
+// Только книги Amazon: своих книг (ru/kz) модели не знают
+async function mlEvents(userId) {
+  const rows = await prisma.$queryRaw`
+    SELECT e.book_id, e.kind, e.value, e.at FROM (
+      SELECT DISTINCT ON (book_id) book_id, kind, value, at FROM (
+        SELECT book_id, 'rating' AS kind, value::int AS value, updated_at AS at, 1 AS prio
+        FROM ratings WHERE user_id = ${userId}
+        UNION ALL
+        SELECT book_id, payload->>'answer', NULL, created_at, 2
+        FROM events WHERE user_id = ${userId} AND type = 'onboarding_answer' AND payload->>'answer' IN ('like', 'dislike')
+        UNION ALL
+        SELECT book_id, CASE WHEN shelf = 'want' THEN 'want' ELSE 'read' END, NULL, updated_at, 3
+        FROM shelves WHERE user_id = ${userId}
+      ) src ORDER BY book_id, prio, at DESC
+    ) e JOIN books b ON b.id = e.book_id AND b.source = 'amazon'
+    ORDER BY e.at DESC LIMIT ${ML_EVENTS_MAX}`
+  return rows.map((r) => ({
+    bookId: r.book_id, kind: r.kind, ...(r.value != null && { value: r.value }), at: r.at.toISOString(),
+  }))
+}
+
+// Книга-зерно для подписи: фронтенду — целиком, чтобы не запрашивать отдельно (5.9)
+const seedOf = (b) => ({ id: b.id, title: b.title, titleRu: b.titleRu, author: b.author, authorRu: b.authorRu })
+
+// Причина из сервиса → Reason фронтенда (lib/reasons.js собирает текст по типу): similar / author → similar /
+// same_author с книгой-зерном; trending {section}; new; topics → topic. Нет причины — null (без подписи)
+function mlReason(reasons, seeds) {
+  const r = reasons?.[0]
+  if (!r) return null
+  switch (r.type) {
+    case 'similar':
+    case 'author': {
+      const seed = r.bookId ? seeds.get(r.bookId) : null
+      return { kind: r.type === 'author' ? 'same_author' : 'similar', ...(seed && { seed: seedOf(seed), seedId: seed.id }) }
+    }
+    case 'trending': return { kind: 'trending', ...(r.section && { section: r.section }) }
+    case 'new': return { kind: 'new' }
+    case 'topics': return { kind: 'topic', ...(r.section && { section: r.section }) }
+    default: return null
+  }
+}
+
+// → { modelVersion, items: [{ book, reason }] } или null — лента на правилах
+async function mlForYou(userId, { profile, filtered, fresh, seriesKeys, limit }) {
+  const events = await mlEvents(userId)
+  if (!events.some((e) => e.kind !== 'dislike')) return null // до онбординга — правила
+  const franchise = seriesKeys.length
+    ? (await prisma.$queryRaw`
+        SELECT id FROM books WHERE source = 'amazon' AND title ILIKE ANY(${seriesKeys.map((k) => `%${k}%`)}::text[])
+        LIMIT ${ML_SERIES_EXCLUDE_MAX}`).map((r) => r.id)
+    : []
+  const res = await recommendFeed({ events, exclude: [...new Set([...filtered.excluded, ...franchise])], n: ML_FEED_N })
+  if (!res?.items.length) return null
+
+  const ids = res.items.map((i) => i.bookId)
+  const seedIds = [...new Set(res.items.flatMap((i) => (i.reasons ?? []).map((r) => r.bookId).filter(Boolean)))]
+  const [rows, seedRows] = await Promise.all([
+    prisma.$queryRaw`SELECT ${bookColumns('b')} FROM books b WHERE b.id = ANY(${ids}::varchar[]) ${profileFilter(filtered)}`,
+    seedIds.length ? prisma.$queryRaw`SELECT ${bookColumns('b')} FROM books b WHERE b.id = ANY(${seedIds}::varchar[])` : [],
+  ])
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  const seeds = new Map(seedRows.map((r) => [r.id, toBook(r)]))
+  // Порядок сервиса; читающим по-русски — известные по-русски на RU_ML_SHIFT мест выше
+  let ranked = res.items.map((item, i) => ({ item, row: byId.get(item.bookId), i })).filter((x) => x.row)
+  if (profile.ru) {
+    const place = (x) => x.i - (x.row.ru_known ? RU_ML_SHIFT : 0)
+    ranked.sort((a, b) => place(a) - place(b))
+  }
+  const books = capPerAuthor(oneEdition(ranked.map((x) => ({ ...toBook(x.row), _reasons: x.item.reasons })).filter(fresh)))
+  return {
+    modelVersion: res.modelVersion,
+    items: books.slice(0, limit).map(({ _reasons, ...book }) => ({ book, reason: mlReason(_reasons, seeds) })),
+  }
+}
+
+// «Для вас» на правилах: по очереди из тем профиля, внутри темы — по взвешенному рейтингу (2.4); мало данных о
+// пользователе — добиваем популярным
+async function rulesForYou({ profile, filtered, fresh, limit, taken = new Set() }) {
+  const bySection = await topInSections(profile.sections.slice(0, 6), { perSection: limit * 2, profile: filtered })
+  const queues = [...bySection.values()].map((q) => capPerAuthor(oneEdition(q.filter(fresh))))
+  let forYou = roundRobin(queues, limit, taken).map((book) => ({ book, reason: reasonFor(book, profile) }))
+  if (forYou.length < limit) {
+    const extra = (await popular({ limit: limit * 2, profile: filtered })).filter((b) => !taken.has(b.id) && fresh(b))
+    forYou = forYou.concat(extra.slice(0, limit - forYou.length).map((book) => ({ book, reason: POPULAR_REASON })))
+  }
+  return forYou
+}
+
+// GET /recommendations — { forYou: [{ book, reason }], forYouSource: 'ml' | 'rules', modelVersion,
+//   series: [{ name, seeds, items }], local: [{ source: 'ru' | 'kz', items: [{ book, reason }] }],
+//   becauseYouLiked: [{ seed, items: [{ book, reason }] }] }
 export async function getRecommendations(userId, { limit = 16 } = {}) {
   if (!userId) {
     const [books, local] = await Promise.all([popular({ limit, ru: prefersRussian(null) }), localRows(null)])
-    return { forYou: books.map((book) => ({ book, reason: POPULAR_REASON })), series: [], local, becauseYouLiked: [] }
+    return {
+      forYou: books.map((book) => ({ book, reason: POPULAR_REASON })), forYouSource: 'rules', modelVersion: null,
+      series: [], local, becauseYouLiked: [],
+    }
   }
 
   const profile = await loadProfile(userId)
@@ -446,15 +584,26 @@ export async function getRecommendations(userId, { limit = 16 } = {}) {
   const seriesKeys = series.map((r) => r.key.toLowerCase())
   const fresh = (b) => !seen.has(editionKey(b.title)) && !seriesKeys.some((k) => b.title.toLowerCase().includes(k))
 
-  // «Для вас»: по очереди из тем профиля, внутри темы — по взвешенному рейтингу (2.4)
-  const bySection = await topInSections(profile.sections.slice(0, 6), { perSection: limit * 2, profile: filtered })
-  const queues = [...bySection.values()].map((q) => capPerAuthor(oneEdition(q.filter(fresh))))
-  let forYou = roundRobin(queues, limit).map((book) => ({ book, reason: reasonFor(book, profile) }))
-  // Мало данных о пользователе — добиваем популярным
-  if (forYou.length < limit) {
-    const taken = new Set(forYou.map((r) => r.book.id))
-    const extra = (await popular({ limit: limit * 2, profile: filtered })).filter((b) => !taken.has(b.id) && fresh(b))
-    forYou = forYou.concat(extra.slice(0, limit - forYou.length).map((book) => ({ book, reason: POPULAR_REASON })))
+  // «Для вас»: ML-сервис, сверху свои правила; недоступен или нет истории — правила (2.4); мало — добор правилами
+  const feed = async () => {
+    const ml = await mlForYou(userId, { profile, filtered, fresh, seriesKeys, limit })
+    if (!ml) return { forYou: await rulesForYou({ profile, filtered, fresh, limit }), forYouSource: 'rules', modelVersion: null }
+    const forYou = ml.items
+    if (forYou.length < limit) {
+      const taken = new Set(forYou.map((r) => r.book.id))
+      const extra = await rulesForYou({ profile, filtered, fresh, limit, taken })
+      // Не больше 2 книг автора и во всей ленте вместе с добором
+      const authors = new Map()
+      for (const { book } of forYou) if (book.author) authors.set(book.author, (authors.get(book.author) ?? 0) + 1)
+      for (const r of extra) {
+        if (forYou.length >= limit) break
+        const n = r.book.author ? authors.get(r.book.author) ?? 0 : 0
+        if (n >= 2) continue
+        if (r.book.author) authors.set(r.book.author, n + 1)
+        forYou.push(r)
+      }
+    }
+    return { forYou, forYouSource: 'ml', modelVersion: ml.modelVersion }
   }
 
   // «Потому что вам понравилась…»: две последние книги с высокой оценкой из разных подразделов
@@ -463,15 +612,16 @@ export async function getRecommendations(userId, { limit = 16 } = {}) {
     if (seeds.length === 2) break
     if (b.section && !seeds.some((s) => s.subsection === b.subsection)) seeds.push(b)
   }
-  const becauseYouLiked = await Promise.all(seeds.map(async (seed) => {
+  const because = () => Promise.all(seeds.map(async (seed) => {
     const items = (await similarTo(seed, { limit: 18, profile: filtered })).filter(fresh).slice(0, 12)
     const reason = { kind: 'similar', text: `Похожа на «${titleFor(seed, profile.ru)}»`, seedId: seed.id }
     const { score: _s, via: _v, little: _l, ...book } = seed
     return { seed: book, items: items.map((b) => ({ book: b, reason })) }
   }))
 
-  const local = await localRows(filtered)
-  return { forYou, series: series.map(({ key: _k, ...row }) => row), local, becauseYouLiked }
+  // Ряды независимы — параллельно (ML-сервис отвечает ~0,2–0,3 с, остальное за это время успевает)
+  const [main, becauseYouLiked, local] = await Promise.all([feed(), because(), localRows(filtered)])
+  return { ...main, series: series.map(({ key: _k, ...row }) => row), local, becauseYouLiked }
 }
 
 // ——— Онбординг (2.3, 3.4) ———
