@@ -100,6 +100,7 @@ class RecommendRequest(BaseModel):
     events: list[Event] = Field(max_length=MAX_EVENTS)
     exclude: list[str] = []
     n: int = Field(default=50, ge=1, le=100)
+    explain: int = Field(default=10, ge=0, le=50)   # сколько верхних книг объяснять (reasons); у остальных — []
 
 
 @app.post("/recommend")
@@ -110,7 +111,7 @@ def recommend(req: RecommendRequest):
         raise HTTPException(503, "рекомендатель не загружен (ML_RECO)")
     with _lock:
         out = reco.recommend([e.model_dump() for e in req.events], exclude=req.exclude, n=req.n,
-                             now=pd.Timestamp.now(tz="UTC").tz_convert(None))
+                             explain=req.explain, now=pd.Timestamp.now(tz="UTC").tz_convert(None))
     if out is None:
         return Response(status_code=204)
     return out
