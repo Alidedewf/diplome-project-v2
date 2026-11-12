@@ -22,7 +22,11 @@
 //
 // Ответы Wikidata и Википедии кэшируются в data/processed/own_books_wd.json после каждой пачки (упал — следующий запуск
 // продолжает с места); --offline — без сети.
-// Запуск из backend/:  npm run load:own-books [-- --offline]
+// --dupes-only (по кэшу, без сети) — только дописать русские поля книгам Amazon, совпавшим со своими (как в конце полного
+// запуска): свои книги, kz_draft.csv и own_books.parquet не трогает. Нужен после load-wikidata-ru, если own-books целиком
+// не перезапускается.
+//
+// Запуск из backend/:  npm run load:own-books [-- --offline] [--dupes-only]
 import fs from 'node:fs'
 import path from 'node:path'
 import { DuckDBInstance } from '@duckdb/node-api'
@@ -171,7 +175,8 @@ async function coverFor(isbn) {
 }
 
 async function main() {
-  const offline = process.argv.includes('--offline')
+  const dupesOnly = process.argv.includes('--dupes-only')
+  const offline = dupesOnly || process.argv.includes('--offline')
   const started = Date.now()
   const cache = fs.existsSync(CACHE) ? JSON.parse(fs.readFileSync(CACHE, 'utf8')) : {}
   for (const k of ['works', 'people', 'labels', 'kzWorks', 'extractsRu', 'extractsKk', 'covers', 'occupations']) cache[k] ??= {}
@@ -288,7 +293,7 @@ async function main() {
       qid, cleanTitle(w.ru), kkTitle(w.kk), cleanTitle(w.orig), w.year, notable ? 'да' : '',
       w.ruArticle ? 'да' : '', w.kkArticle ? 'да' : '', w.links,
       w.ruArticle ? wikiUrl('ru', w.ruArticle) : w.kkArticle ? wikiUrl('kk', w.kkArticle) : `https://www.wikidata.org/wiki/${qid}`, '', ''])]
-    fs.writeFileSync(KZ_DRAFT, '﻿' + lines.map((l) => l.map(csvCell).join(',')).join('\r\n') + '\r\n')
+    if (!dupesOnly) fs.writeFileSync(KZ_DRAFT, '﻿' + lines.map((l) => l.map(csvCell).join(',')).join('\r\n') + '\r\n')
     const kzNew = []
     const seenKz = new Set()
     for (const d of draft) {
@@ -344,6 +349,12 @@ async function main() {
 
     // ——— Запись
     await db.query('BEGIN')
+    if (dupesOnly) {
+      await fillDupes()
+      await db.query('COMMIT')
+      console.log(`Дубли с Amazon: ${dupes.length} произведений, книг Amazon ${dupes.reduce((n, d) => n + d.ids.length, 0)} (только русские поля)`)
+      return
+    }
     const cols = ['id', 'title', 'author', 'year', 'section', 'category', 'subsection', 'language', 'isbn13', 'cover', 'annotation',
       'rating', 'ratings_count', 'weighted_rating', 'source', 'fame', 'wikidata_qid', 'title_ru', 'author_ru', 'ru_known',
       'annotation_ru', 'annotation_source', 'annotation_url']
@@ -355,16 +366,19 @@ async function main() {
     }
     // Своих книг, выпавших из пилота, больше нет (оценки и полки по ним удаляются каскадом)
     const removed = await db.query(`DELETE FROM books WHERE source IN ('ru', 'kz') AND NOT (id = ANY($1::varchar[]))`, [own.map((b) => b.id)])
-    // Дубли: книгам Amazon — русское название, QID, описание из Википедии (если своего из Википедии нет)
-    for (const d of dupes) {
-      const text = ruText(d.w)
-      await db.query(`UPDATE books SET title_ru = coalesce(title_ru, $2), wikidata_qid = coalesce(wikidata_qid, $3), ru_known = true,
-          annotation_ru = CASE WHEN $4::text IS NOT NULL AND annotation_source IS DISTINCT FROM 'wikipedia' THEN $4 ELSE annotation_ru END,
-          annotation_url = CASE WHEN $4::text IS NOT NULL AND annotation_source IS DISTINCT FROM 'wikipedia' THEN $5 ELSE annotation_url END,
-          annotation_source = CASE WHEN $4::text IS NOT NULL AND annotation_source IS DISTINCT FROM 'wikipedia' THEN 'wikipedia' ELSE annotation_source END
-        WHERE id = ANY($1::varchar[])`, [d.ids, d.w.ru, d.qid, text, d.w.ruArticle ? wikiUrl('ru', d.w.ruArticle) : null])
-    }
+    await fillDupes()
     await db.query('COMMIT')
+    // Дубли: книгам Amazon — русское название, QID, описание из Википедии (если своего из Википедии нет)
+    async function fillDupes() {
+      for (const d of dupes) {
+        const text = ruText(d.w)
+        await db.query(`UPDATE books SET title_ru = coalesce(title_ru, $2), wikidata_qid = coalesce(wikidata_qid, $3), ru_known = true,
+            annotation_ru = CASE WHEN $4::text IS NOT NULL AND annotation_source IS DISTINCT FROM 'wikipedia' THEN $4 ELSE annotation_ru END,
+            annotation_url = CASE WHEN $4::text IS NOT NULL AND annotation_source IS DISTINCT FROM 'wikipedia' THEN $5 ELSE annotation_url END,
+            annotation_source = CASE WHEN $4::text IS NOT NULL AND annotation_source IS DISTINCT FROM 'wikipedia' THEN 'wikipedia' ELSE annotation_source END
+          WHERE id = ANY($1::varchar[])`, [d.ids, d.w.ru, d.qid, text, d.w.ruArticle ? wikiUrl('ru', d.w.ruArticle) : null])
+      }
+    }
 
     // ——— Тексты для векторов ML
     const tmp = `${OWN_PARQUET}.json`

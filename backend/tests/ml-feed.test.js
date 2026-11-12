@@ -73,6 +73,21 @@ describe('«Для вас» из ML-сервиса', () => {
     expect(res.forYou).toHaveLength(6)
   })
 
+  it('объяснения — для 30 верхних; книги меньше чем с 20 оценками не показываем', async () => {
+    const u = await registerUser()
+    await request(app).put(`/api/me/ratings/${book('Mystery Book 1').id}`).set(u.auth).send({ value: 5 }).expect(200)
+    const rare = book('Winter Box Set') // 5 оценок
+    const edge = book('The Mara Quill Collection') // 20 — проходит
+    const sf = book('Science Fiction Book 1')
+    answer = () => items([[rare.id], [edge.id], [sf.id]])
+    const res = await feed(u)
+    expect(requests[0].explain).toBe(30)
+    const ids = res.forYou.map((r) => r.book.id)
+    expect(ids.slice(0, 2)).toEqual([edge.id, sf.id])
+    expect(ids).not.toContain(rare.id)
+    expect(res.forYou.every((r) => r.book.ratingsCount >= 20 || r.book.source !== 'amazon')).toBe(true)
+  })
+
   it('не больше 2 книг одного автора', async () => {
     const u = await registerUser()
     await request(app).put(`/api/me/ratings/${book('Mystery Book 1').id}`).set(u.auth).send({ value: 5 }).expect(200)

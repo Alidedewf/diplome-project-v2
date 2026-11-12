@@ -5,6 +5,7 @@ import { DuckDBInstance } from '@duckdb/node-api'
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { loadAnnotations } from '../scripts/load-annotations-ru.js'
+import { resolveTitle } from '../scripts/load-wikidata-ru.js'
 import { prisma } from '../src/db.js'
 import { fuse } from '../src/routes/search.js'
 import { BOOKS } from './fixtures.js'
@@ -60,6 +61,22 @@ describe('русское название и имя автора', () => {
 
     const found = (await request(app).get('/api/search').query({ q: 'Тайна пятая', mode: 'keyword' }).expect(200)).body
     expect(found.items[0].id).toBe(known.id)
+  })
+})
+
+describe('русское название из Wikidata: произведение, а не цикл', () => {
+  const book = { title: 'Dune', author: 'Frank Herbert' }
+  const herbert = ['Frank Herbert']
+  const series = { qid: 'Q6095696', ru: 'Хроники Дюны', authors: herbert }
+  const film = { qid: 'Q60834962', ru: 'Дюна', authors: herbert }
+  const novel = { qid: 'Q190192', ru: 'Дюна (роман)', authors: herbert }
+  const types = { Q6095696: ['Q1667921'], Q60834962: ['Q11424'], Q190192: ['Q7725634'] }
+
+  it('сначала произведение, затем что угодно, кроме цикла; только цикл — без названия', () => {
+    expect(resolveTitle(book, [series, film, novel], types)).toEqual({ ru: 'Дюна', qid: 'Q190192' })
+    expect(resolveTitle(book, [series, film], types)).toEqual({ ru: 'Дюна', qid: 'Q60834962' })
+    expect(resolveTitle(book, [series], types)).toBeNull()
+    expect(resolveTitle({ ...book, author: 'Kevin J. Anderson' }, [novel], types)).toBeNull() // фамилия автора другая
   })
 })
 

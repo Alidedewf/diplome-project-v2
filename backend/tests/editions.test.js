@@ -1,18 +1,19 @@
 import request from 'supertest'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { prisma } from '../src/db.js'
+import { editionKey } from '../src/lib/books.js'
 import { app, registerUser } from './helpers.js'
 
 // Детский раздел: два издания одной книги, подростковая книга (10+) и книга для малышей (картонная).
-// Оценок мало — в популярное для гостя и чужие тесты не попадают
+// Оценок мало (но не меньше порога ленты «Для вас» — 20) — в популярное для гостя и чужие тесты не попадают
 const CHILDREN = "Children's Books"
 const base = { section: CHILDREN, category: CHILDREN, subsection: 'Growing Up & Facts of Life', year: 2015, rating: 4.5, weightedRating: 4.4, cover: 'https://example.com/c.jpg' }
 const BOOKS = [
-  { id: 'K000000001', title: 'Moon Tale', author: 'Ivy Lark', ratingsCount: 9 },
-  { id: 'K000000002', title: 'Moon Tale: The Illustrated Edition', author: 'Ivy Lark', ratingsCount: 8 },
-  { id: 'K000000003', title: 'Arena Games', author: 'Teen Writer', ratingsCount: 7, readingAgeMin: 10 },
-  { id: 'K000000004', title: 'Tiny Bear Says Goodnight', author: 'Toddler Writer', ratingsCount: 6, format: 'Board book' },
-  { id: 'K000000005', title: 'Pond Friends', author: 'Picture Writer', ratingsCount: 5, readingAgeMin: 2, readingAgeMax: 5 },
+  { id: 'K000000001', title: 'Moon Tale', author: 'Ivy Lark', ratingsCount: 29 },
+  { id: 'K000000002', title: 'Moon Tale: The Illustrated Edition', author: 'Ivy Lark', ratingsCount: 28 },
+  { id: 'K000000003', title: 'Arena Games', author: 'Teen Writer', ratingsCount: 27, readingAgeMin: 10 },
+  { id: 'K000000004', title: 'Tiny Bear Says Goodnight', author: 'Toddler Writer', ratingsCount: 26, format: 'Board book' },
+  { id: 'K000000005', title: 'Pond Friends', author: 'Picture Writer', ratingsCount: 25, readingAgeMin: 2, readingAgeMax: 5 },
 ].map((b) => ({ ...base, ...b }))
 const [moon, moonIllustrated, arena, tinyBear, pond] = BOOKS
 
@@ -45,6 +46,17 @@ describe('одно издание на название', () => {
     const second = await list({ limit: 2, offset: 2 })
     expect([...first.items, ...second.items].map((b) => b.id)).toEqual(all.items.map((b) => b.id))
     expect(all.items.map((b) => b.id)).not.toContain(moonIllustrated.id)
+  })
+})
+
+describe('хвосты изданий', () => {
+  it("«…, Collector's Edition», «… (New Edition)», «… Boxed Set» — одно название", () => {
+    const key = editionKey('The Tales of Beedle the Bard')
+    expect(editionKey("The Tales of Beedle the Bard, Collector's Edition")).toBe(key)
+    expect(editionKey('The Tales of Beedle the Bard (New Edition)')).toBe(key)
+    expect(editionKey('Dune 40th Anniversary Edition')).toBe(editionKey('Dune'))
+    expect(editionKey('Moon Saga Paperback Boxed Set')).toBe(editionKey('Moon Saga'))
+    expect(editionKey('Special Edition')).toBe('special edition') // одни служебные слова — название не трогаем
   })
 })
 

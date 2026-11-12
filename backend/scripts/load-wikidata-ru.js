@@ -15,7 +15,10 @@
 // тоже есть). Только «переводы в Wikidata» — слишком строго: у Сэндфорда, Корнуэлл, Слотер их там нет.
 // Русское имя показываем в любом случае.
 // Книги с RATINGS_TITLES+ оценками: произведение с автором (P50), чьё английское название совпадает с названием книги
-// до «:» / «(» и у одного из авторов та же фамилия; русское название — rdfs:label@ru кириллицей.
+// до «:» / «(» и у одного из авторов та же фамилия; русское название — rdfs:label@ru кириллицей, без пометки «(роман)».
+// Из нескольких подходящих — сначала произведение (WORK_TYPES), затем что угодно, кроме цикла: «Dune» совпадает с романом
+// («Дюна»), с циклом («Хроники Дюны») и с фильмом 2021 года, «The City of Ember» — с «Книгами Эмбера». Цикл — тип (P31) из SERIES_TYPES без типа произведения
+// (WORK_TYPES: «Властелин колец» — и трилогия, и произведение); нашёлся только цикл — русского названия нет.
 //
 // Русское описание: у произведения со статьёй в русской Википедии (sitelink) — начало статьи (API extracts, вступление
 // без разметки, первые абзацы до ~WIKI_MAX_CHARS символов) → books.annotation_ru, annotation_source = 'wikipedia',
@@ -28,7 +31,12 @@
 // Ответы Wikidata и Википедии кэшируются в data/processed/wikidata_ru.json (по каждому запрошенному имени и названию, в том числе
 // пустые): повторный запуск спрашивает только новое, --offline — без сети.
 //
-// Запуск из backend/:  npm run load:wikidata-ru [-- --offline] [--limit N]
+// --titles-only — пересчитать только русские названия (и описания из Википедии) и записать лишь изменившиеся книги, без
+// полной перезаписи (лёгкая правка после изменения правил сопоставления; ru_known у потерявших название не сбрасывается).
+// Название, которого в новом расчёте нет, снимается, только если оно от цикла: остальные дописал load-own-books (дубли
+// своих книг — «Обломов», «Архипелаг ГУЛАГ»), этот скрипт о них не знает.
+//
+// Запуск из backend/:  npm run load:wikidata-ru [-- --offline] [--titles-only] [--limit N]
 import fs from 'node:fs'
 import path from 'node:path'
 import pg from 'pg'
@@ -64,6 +72,16 @@ export const PUBLIC_OCCUPATIONS = new Set(['Q82955', 'Q43845', 'Q131524', 'Q9478
   'Q112122634', 'Q130857', 'Q44508716', 'Q15982858', 'Q4610556'])
 const DOMINANT_RATIO = 2
 const CYRILLIC = /[А-Яа-яЁё]/
+// Циклы и серии (P31): novel series, book series, literary trilogy / dylogy / pentalogy / hexalogy, heptalogy, heptad,
+// children's book series, comic book series, comic strip series, limited series, miniseries, series of creative works,
+// literary cycle, group of literary works, media franchise, canon
+export const SERIES_TYPES = new Set(['Q1667921', 'Q277759', 'Q13593966', 'Q53843792', 'Q17710986', 'Q52269333', 'Q614101',
+  'Q29441572', 'Q47068459', 'Q14406742', 'Q21191134', 'Q3297186', 'Q1259759', 'Q7725310', 'Q867335', 'Q17518870', 'Q196600', 'Q53815'])
+// Произведение: literary work, written work, non-fiction literary work, dramatic work
+export const WORK_TYPES = new Set(['Q7725634', 'Q47461344', 'Q20540385', 'Q116476516'])
+export const isSeries = (types = []) => types.some((t) => SERIES_TYPES.has(t)) && !types.some((t) => WORK_TYPES.has(t))
+// «Город Эмбер: Побег (роман)» → «Город Эмбер: Побег»
+export const cleanTitleRu = (ru) => ru.replace(/\s*\((?:роман|повесть|книга|рассказ|сборник|пьеса|поэма|комикс)[^)]*\)\s*$/i, '').trim()
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const quoted = (s) => `"${s.replaceAll('\\', '').replaceAll('"', '\\"')}"`
 const literals = (list) => list.flatMap((s) => [`${quoted(s)}@en`, `${quoted(s)}@mul`]).join(' ')
@@ -167,6 +185,8 @@ export function wikiIntro(extract) {
   return out.join('\n\n') || null
 }
 
+const typeQuery = (qids) => `SELECT ?w ?t WHERE { VALUES ?w { ${qids.map((q) => `wd:${q}`).join(' ')} } ?w wdt:P31 ?t }`
+
 const titleQuery = (titles) => `SELECT ?t ?w ?ru ?aEn WHERE {
   VALUES ?t { ${literals(titles)} }
   ?w rdfs:label ?t ; wdt:P50 ?a .
@@ -251,15 +271,43 @@ export function resolveAuthor(author, candidates) {
   return { qid: person.qid, nameRu: pseudonym ? null : nameRu }
 }
 
-export function resolveTitle(book, candidates) {
+// types — P31 кандидатов по QID (без них — как раньше, первый подходящий)
+export function resolveTitle(book, candidates, types = {}) {
   const last = lastName(book.author)
-  const hit = candidates.find((c) => c.ru && CYRILLIC.test(c.ru) && c.authors.some((a) => lastName(a) === last))
-  return hit ? { ru: hit.ru, qid: hit.qid } : null
+  const matched = candidates.filter((c) => c.ru && CYRILLIC.test(c.ru) && c.authors.some((a) => lastName(a) === last))
+  const isWork = (c) => (types[c.qid] ?? []).some((t) => WORK_TYPES.has(t))
+  const hit = matched.find(isWork) ?? matched.find((c) => !isSeries(types[c.qid]))
+  return hit ? { ru: cleanTitleRu(hit.ru), qid: hit.qid } : null
+}
+
+// --titles-only: только книги, у которых русское название или QID произведения изменились
+async function updateTitles(db, titled, described, types) {
+  const target = new Map(titled.map((t) => [t.id, t]))
+  const about = new Map(described.map((d) => [d.id, d]))
+  const { rows } = await db.query(`SELECT id, title, title_ru, wikidata_qid, annotation_source FROM books
+    WHERE source = 'amazon' AND (title_ru IS NOT NULL OR id = ANY($1::text[]))`, [[...target.keys()]])
+  const changed = rows.filter((r) => (target.has(r.id)
+    ? target.get(r.id).ru !== r.title_ru || target.get(r.id).qid !== r.wikidata_qid
+    : r.title_ru !== null && isSeries(types[r.wikidata_qid])))
+  const ids = changed.map((r) => r.id)
+  const col = (f) => changed.map((r) => f(target.get(r.id), about.get(r.id), r))
+  await db.query('BEGIN')
+  await db.query(`UPDATE books b SET title_ru = c.ru, wikidata_qid = c.qid, ru_known = b.ru_known OR c.ru IS NOT NULL,
+      annotation_ru = CASE WHEN c.text IS NOT NULL THEN c.text WHEN b.annotation_source = 'wikipedia' THEN NULL ELSE b.annotation_ru END,
+      annotation_url = CASE WHEN c.text IS NOT NULL THEN c.url WHEN b.annotation_source = 'wikipedia' THEN NULL ELSE b.annotation_url END,
+      annotation_source = CASE WHEN c.text IS NOT NULL THEN 'wikipedia' WHEN b.annotation_source = 'wikipedia' THEN NULL ELSE b.annotation_source END
+    FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[]) AS c(id, ru, qid, text, url) WHERE b.id = c.id`,
+  [ids, col((t) => t?.ru ?? null), col((t) => t?.qid ?? null), col((_t, d) => d?.text ?? null), col((_t, d) => d?.url ?? null)])
+  await db.query('COMMIT')
+  console.log(`Названия: изменилось ${changed.length} книг (стало без названия ${changed.filter((r) => !target.has(r.id)).length},`
+    + ` потеряли описание из Википедии ${changed.filter((r) => r.annotation_source === 'wikipedia' && !about.has(r.id)).length})`)
+  for (const r of changed.slice(0, 30)) console.log(`  ${r.id} ${r.title.slice(0, 50)}: ${r.title_ru ?? '—'} → ${target.get(r.id)?.ru ?? '—'}`)
 }
 
 async function main() {
   const args = process.argv.slice(2)
   const offline = args.includes('--offline')
+  const titlesOnly = args.includes('--titles-only')
   const limit = args.includes('--limit') ? Number(args[args.indexOf('--limit') + 1]) : Infinity
   const started = Date.now()
 
@@ -269,6 +317,7 @@ async function main() {
   cache.ruWorks ??= {}
   cache.articles ??= {}
   cache.extracts ??= {}
+  cache.types ??= {}
   const save = () => {
     const tmp = `${CACHE}.tmp`
     fs.writeFileSync(tmp, JSON.stringify({ ...cache, updatedAt: new Date().toISOString() }))
@@ -312,7 +361,18 @@ async function main() {
         label: 'Названия',
         save,
       })
-      if (tA || tT) console.log(`Wikidata: авторы ${Math.round(tA)} с, названия ${Math.round(tT)} с`)
+      // Типы произведений с русским названием — отличить роман от цикла
+      const tY = await fetchMissing({
+        keys: [...new Set(Object.values(cache.titles).flat().filter((c) => c.ru && CYRILLIC.test(c.ru)).map((c) => c.qid))],
+        store: cache.types,
+        query: typeQuery,
+        keyOf: (r) => r.w.value.split('/').pop(),
+        toCandidate: (r) => r.t.value.split('/').pop(),
+        label: 'Типы произведений',
+        batch: 200,
+        save,
+      })
+      if (tA || tT || tY) console.log(`Wikidata: авторы ${Math.round(tA)} с, названия ${Math.round(tT)} с, типы ${Math.round(tY)} с`)
     }
 
     // Сопоставление
@@ -330,7 +390,7 @@ async function main() {
         w.ru ??= c.ru
         byWork.set(c.qid, w)
       }
-      const hit = resolveTitle(b, [...byWork.values()])
+      const hit = resolveTitle(b, [...byWork.values()], cache.types)
       if (hit) titled.push({ id: b.id, ru: hit.ru, qid: hit.qid, author: b.author })
     }
 
@@ -376,6 +436,8 @@ async function main() {
       const intro = article && wikiIntro(cache.extracts[article] ?? '')
       if (intro) described.push({ id: t.id, text: intro, url: `https://ru.wikipedia.org/wiki/${encodeURIComponent(article.replaceAll(' ', '_'))}` })
     }
+
+    if (titlesOnly) return await updateTitles(db, titled, described, cache.types)
 
     const translatedAuthors = new Set(titled.map((t) => t.author))
     for (const r of resolved) {

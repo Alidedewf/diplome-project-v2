@@ -128,6 +128,32 @@ export async function nearestExactTo(bookId, { model, where = Prisma.empty, colu
   return (await vectorPool.query(sql.text, sql.values)).rows.filter((r) => r.similarity != null)
 }
 
+// Для каждой из книг seedIds — perSeed ближайших точным перебором (небольшая выборка where, без самих seedIds) → строки
+// books (columns) + seedId, similarity, rank (место у этой книги, с 1) и z — насколько книга выделяется среди всей выборки
+// для этой seedId (близость минус средняя, в стандартных отклонениях). Близость между разными seedIds не сравниваем:
+// у e5 своя шкала у каждого текста (у одних английских книг близость ко всем русским текстам выше, чем у других)
+export async function nearestPerSeedExact(seedIds, { model, where = Prisma.empty, columns, perSeed }) {
+  const dim = await modelDimCached(model)
+  if (!dim || !seedIds.length) return []
+  const typ = Prisma.raw(`vector(${dim})`)
+  const sql = Prisma.sql`
+    WITH seeds AS MATERIALIZED (
+      SELECT book_id, embedding::${typ} AS v FROM book_embeddings WHERE model = ${model} AND book_id = ANY(${seedIds}::varchar[])
+    ),
+    pool AS MATERIALIZED (SELECT ${columns} FROM books b WHERE NOT (b.id = ANY(${seedIds}::varchar[])) ${where}),
+    pairs AS (
+      SELECT pool.*, s.book_id AS "seedId", 1 - (e.embedding::${typ} <=> s.v) AS similarity
+      FROM pool JOIN book_embeddings e ON e.model = ${model} AND e.book_id = pool.id CROSS JOIN seeds s
+    ),
+    ranked AS (
+      SELECT *, row_number() OVER (PARTITION BY "seedId" ORDER BY similarity DESC) AS rank,
+        (similarity - avg(similarity) OVER (PARTITION BY "seedId")) / nullif(stddev_pop(similarity) OVER (PARTITION BY "seedId"), 0) AS z
+      FROM pairs
+    )
+    SELECT * FROM ranked WHERE rank <= ${perSeed} ORDER BY "seedId", rank`
+  return (await vectorPool.query(sql.text, sql.values)).rows.map((r) => ({ ...r, rank: Number(r.rank) }))
+}
+
 // Книги по близости к вкусу — среднему вектору понравившихся (likedIds), точным перебором: для небольших выборок вроде
 // своего каталога (where — условия на books b). Книги без вектора — в конце, порядок среди них — order. null — у
 // понравившихся или у самих книг векторов этой модели нет (тогда вызывающий сортирует по-своему)

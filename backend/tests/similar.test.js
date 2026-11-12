@@ -97,9 +97,54 @@ describe('свой каталог по вкусу', () => {
     expect((await similar(fantasy3, u.auth)).some((b) => b.source !== 'amazon')).toBe(false)
   })
 
+  it('«Для вас»: свои книги на 4-м и 9-м месте по близости к понравившимся; в рядах своих книг не повторяются', async () => {
+    const u = await registerUser()
+    await request(app).put(`/api/me/ratings/${fantasy3.id}`).set(u.auth).send({ value: 5 }).expect(200)
+    const forYou = async () => (await request(app).get('/api/recommendations').set(u.auth).expect(200)).body
+    const ru = await forYou() // язык не выбран — читающий по-русски
+    expect(ru.forYou).toHaveLength(16)
+    // Свои книги из другого раздела (Literature & Fiction, а Fantasy Book 3 — фантастика) — без зерна
+    expect(ru.forYou[3]).toEqual({ book: expect.objectContaining({ id: near.id, source: 'ru' }), reason: { kind: 'own_catalog' } })
+    expect(ru.forYou[8].book.id).toBe(far.id)
+    expect(ru.forYou.filter((r) => r.reason?.kind === 'own_catalog')).toHaveLength(2)
+    const inRows = ru.local.flatMap((row) => row.items.map((i) => i.book.id))
+    expect(inRows).not.toContain(near.id)
+    expect(inRows).not.toContain(far.id)
+
+    // Только казахский — казахских книг нет, слота нет; английский — тоже
+    for (const readingLanguages of [['kk'], ['en']]) {
+      await request(app).patch('/api/me/profile').set(u.auth).send({ readingLanguages }).expect(200)
+      expect((await forYou()).forYou.some((r) => r.reason?.kind === 'own_catalog')).toBe(false)
+    }
+  })
+
+  it('«Похожа на» в слоте — только своя книга того же раздела, заметно ближе остальных своих', async () => {
+    // Своя фантастика рядом с Fantasy Book 3 и 20 своих книг далеко — на их фоне она выделяется (z ≥ 2,5)
+    const close = { id: 'wd:Q900010', title: 'Близкая фантастика', author: 'Другой автор', k: 7.05 }
+    const fillers = Array.from({ length: 20 }, (_, i) => ({ id: `wd:Q9001${String(i).padStart(2, '0')}`, title: `Далёкая ${i}`, author: `Наполнитель ${i}`, k: 16 }))
+    const extra = [close, ...fillers]
+    try {
+      for (const b of extra) {
+        await prisma.book.create({ data: { id: b.id, title: b.title, author: b.author, section: 'Science Fiction & Fantasy', category: 'Science Fiction & Fantasy', source: 'ru', fame: 1, ruKnown: true } })
+        await prisma.$executeRawUnsafe(`INSERT INTO book_embeddings (book_id, model, embedding) VALUES ($1, $2, $3::vector)`, b.id, MODEL, `[${vectorOf(b.k).join(',')}]`)
+      }
+      const u = await registerUser()
+      await request(app).put(`/api/me/ratings/${fantasy3.id}`).set(u.auth).send({ value: 5 }).expect(200)
+      const { forYou } = (await request(app).get('/api/recommendations').set(u.auth).expect(200)).body
+      const seed = { id: fantasy3.id, title: fantasy3.title, titleRu: null, author: fantasy3.author, authorRu: null }
+      expect(forYou[3]).toEqual({ book: expect.objectContaining({ id: close.id }), reason: { kind: 'own_catalog', seed, seedId: fantasy3.id } })
+      // Вторая — другого автора (near), из другого раздела — без зерна
+      expect(forYou[8]).toEqual({ book: expect.objectContaining({ id: near.id }), reason: { kind: 'own_catalog' } })
+    } finally {
+      await prisma.book.deleteMany({ where: { id: { in: extra.map((b) => b.id) } } })
+    }
+  })
+
   it('после входа — ближе к понравившимся книгам; гостю — по известности', async () => {
     const u = await registerUser()
     await request(app).put(`/api/me/ratings/${fantasy3.id}`).set(u.auth).send({ value: 5 }).expect(200)
+    // С английским — без слота своего каталога в «Для вас», иначе обе книги ушли бы туда из ряда
+    await request(app).patch('/api/me/profile').set(u.auth).send({ readingLanguages: ['en'] }).expect(200)
     const list = async (auth) => (await request(app).get('/api/books').query({ source: 'ru' }).set(auth).expect(200)).body.items.map((b) => b.id)
     expect(await list(u.auth)).toEqual([near.id, far.id])
     expect(await list({})).toEqual([far.id, near.id])

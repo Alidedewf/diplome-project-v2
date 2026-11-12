@@ -79,9 +79,23 @@ export function capPerAuthor(books, max = 2) {
 // типографский апостроф — как обычный (Sorcerer’s = Sorcerer's)
 export const titleWords = (title) => title.toLowerCase().replace(/[’‘]/g, "'").replace(/\(.*?\)|\[.*?\]/g, ' ')
   .split(/[:;/]/)[0].replace(/,\s*(?:book|vol\.?|volume)\s*\d+\s*$/, '').match(/[\p{L}\p{N}']+/gu) ?? []
+// Хвост издания без двоеточия и скобок: «…, Collector's Edition», «… 10th Anniversary Edition», «… Paperback Boxed Set»
+const EDITION_WORDS = new Set(['new', 'revised', 'special', 'deluxe', 'illustrated', 'anniversary', 'gift', 'limited', 'expanded',
+  'updated', 'unabridged', 'abridged', 'annotated', 'definitive', 'international', 'mass', 'market', 'paperback', 'hardcover',
+  'movie', 'tie', 'in', 'first', 'second', 'third', 'large', 'print', 'signed', 'exclusive', 'edition', 'the', 'a', 'an'])
+const isEditionWord = (w) => EDITION_WORDS.has(w) || /'s$/.test(w) || /^\d+(st|nd|rd|th)?$/.test(w)
+function dropEditionTail(words) {
+  let end = words.length
+  if (words[end - 1] === 'edition') end -= 1
+  else if (words[end - 1] === 'set' && ['box', 'boxed'].includes(words[end - 2])) end -= 2
+  else return words
+  while (end > 0 && words.length - end < 6 && isEditionWord(words[end - 1])) end -= 1
+  return end > 0 ? words.slice(0, end) : words
+}
 // Название для сравнения изданий: «The Martian» = «Martian, The» = «The Martian (Movie Tie-in)»,
-// «Harry Potter and the Sorcerer's Stone» = «…: The Illustrated Edition»
-export const editionKey = (title) => titleWords(title).filter((w, i, all) => !((i === 0 || i === all.length - 1) && ['the', 'a', 'an'].includes(w))).join(' ')
+// «Harry Potter and the Sorcerer's Stone» = «…: The Illustrated Edition» = «…, Collector's Edition»
+export const editionKey = (title) => dropEditionTail(titleWords(title))
+  .filter((w, i, all) => !((i === 0 || i === all.length - 1) && ['the', 'a', 'an'].includes(w))).join(' ')
 
 // Одно издание на название и автора — первое в порядке списка (самое популярное). Первые n книг результата зависят
 // только от первых строк списка, поэтому страницы можно считать по префиксу
