@@ -18,11 +18,11 @@ function tone(id = '') {
   return PLACEHOLDER_TONES[h % PLACEHOLDER_TONES.length]
 }
 
-// withBadge — сверху на обложке пометка (язык оригинала): название уходит ниже, чтобы она его не закрывала
+// withBadge — сверху на обложке пометка (язык оригинала или слот своего каталога, до двух строк): название уходит ниже
 function CoverPlaceholder({ book, withBadge }) {
   const names = useBookNames(book)
   return (
-    <div className={cn('absolute inset-0 flex flex-col justify-between p-[8%]', withBadge && 'pt-9', tone(book?.id))} aria-hidden>
+    <div className={cn('absolute inset-0 flex flex-col justify-between p-[8%]', withBadge && 'pt-12', tone(book?.id))} aria-hidden>
       <p lang={names.titleLang} className="line-clamp-5 font-serif text-[clamp(0.7rem,10cqw,1.4rem)] leading-tight font-semibold hyphens-auto [overflow-wrap:anywhere]">
         {names.title}
       </p>
@@ -67,7 +67,7 @@ export function BookCover({ book, className, eager = false, badge }) {
           )}
         />
       )}
-      {badge && <div className="absolute top-2 left-2">{badge}</div>}
+      {badge && <div className="absolute inset-x-2 top-2">{badge}</div>}
       {/* тонкий «корешок» слева — чтобы обложка читалась как книга */}
       <span className="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-black/10" aria-hidden />
     </div>

@@ -1,5 +1,6 @@
 // Запасной режим без сервера (VITE_USE_MOCKS=1): данные из shared/mock/books_sample.json,
 // пользователи и их действия — в localStorage. Формы ответов те же, что у настоящего API (см. ./index.js).
+import { readsRussian } from '../lib/bookNames.js'
 import { sectionLabel, subsectionLabel } from '../lib/sections.js'
 import { ApiError, getToken, setToken } from './http.js'
 
@@ -288,7 +289,8 @@ function reasonFor(book, profile) {
   if (inTopics && book.year >= 2018 && book.ratingsCount >= 3000) return { kind: 'trending', section: book.section }
   const twin = profile.liked.find((l) => l.id !== book.id && l.subsection && l.subsection === book.subsection)
   if (twin) return { kind: 'similar', seed: seedOf(twin) }
-  return inTopics ? { kind: 'topic', section: book.section } : null
+  // «в ваших темах» — только первая тема; остальное без причины, как у ML-ленты (reason: null)
+  return book.section === profile.sections[0] ? { kind: 'topic', section: book.section } : null
 }
 
 function roundRobin(queues, limit) {
@@ -362,11 +364,22 @@ export async function getRecommendations({ limit = 16 } = {}) {
   const profile = profileOf(account, byId)
   const skip = (b) => profile.excluded.has(b.id) || profile.liked.some((l) => l.id === b.id)
   const queues = profile.sections.slice(0, 6).map((s) => books.filter((b) => b.section === s && !skip(b)).sort(byWeighted(meanRating)))
-  let forYou = roundRobin(queues, limit).map((book) => ({ book, reason: reasonFor(book, profile) ?? POPULAR_REASON }))
+  // как ML-лента (4.11): у части книг причины нет — reason: null, без подписи
+  let forYou = roundRobin(queues, limit).map((book) => ({ book, reason: reasonFor(book, profile) }))
   if (forYou.length < limit) {
     const taken = new Set(forYou.map((r) => r.book.id))
     const extra = popular().filter((b) => !taken.has(b.id) && !skip(b))
     forYou = forYou.concat(extra.slice(0, limit - forYou.length).map((book) => ({ book, reason: POPULAR_REASON })))
+  }
+  // слот своего каталога (4.12: 4-е и 9-е места) читающим по-русски: русская книга с книгой-зерном и казахская без
+  if (readsRussian(account.user)) {
+    const own = ['ru', 'kz'].map((source) => books.find((b) => b.source === source && !skip(b))).filter(Boolean)
+    const seed = profile.liked.find((l) => l.source === 'amazon')
+    own.forEach((book, i) => {
+      const reason = { kind: 'own_catalog', ...(i === 0 && seed && { seed: seedOf(seed), seedId: seed.id }) }
+      forYou.splice(i === 0 ? 3 : 8, 0, { book, reason })
+    })
+    forYou = forYou.slice(0, limit)
   }
 
   const becauseYouLiked = profile.liked.slice(0, 2).map((seed) => ({

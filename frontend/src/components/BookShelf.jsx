@@ -77,6 +77,7 @@ export function BookShelf({ title, subtitle, action, items, withReasons = false,
                   key={book.id}
                   book={book}
                   reason={reason}
+                  feed={withReasons}
                   onOpen={onOpen && (() => onOpen(book, reason))}
                   className={cn(ITEM_WIDTH, 'shrink-0 snap-start')}
                 />
