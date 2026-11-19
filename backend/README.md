@@ -15,6 +15,7 @@ npm run load:books              # data/processed/books_clean.parquet → books (
 npm run load:wikidata-ru        # русские имена и названия из Wikidata (см. «Книги на языке читателя»)
 npm run load:own-books          # свой каталог русских и казахских книг (после load:wikidata-ru, см. «Свой каталог»)
 npm run load:item-neighbors     # соседи ItemKNN из последней сборки models/serve/ → item_neighbors (~30 с, заменяет целиком)
+npm run load:review-summary     # сводки отзывов data/processed/review_summary_site.parquet (заменяет целиком, см. «Сводка отзывов»)
 npm run dev                     # API: http://localhost:3000/api
 npm test                        # vitest + supertest, отдельная база bookmind_test
 ```
@@ -32,7 +33,7 @@ npm test                        # vitest + supertest, отдельная баз�
 | `GET /auth/me` | `{ user }` |
 | `GET /sections` | `[{ name, booksCount }]` |
 | `GET /books?section=&source=amazon\|ru\|kz&sort=popular\|rating&limit=&offset=` | `{ items: Book[], total }` |
-| `GET /books/:id` | `Book & { annotationRu, annotationSource: 'wikipedia' \| 'mt' \| null, annotationUrl, recommendation: Reason \| null, my: { rating, shelf, hidden } \| null }` |
+| `GET /books/:id` | `Book & { annotationRu, annotationSource: 'wikipedia' \| 'mt' \| null, annotationUrl, reviewSummary: ReviewSummary \| null, recommendation: Reason \| null, my: { rating, shelf, hidden } \| null }` |
 | `GET /books/:id/similar?limit=` | `Book[]` |
 | `GET /search?q=&section=&year=2015\|2010-2015&rating=&hideRead=1&mode=hybrid\|keyword\|semantic&semWeight=&limit=&offset=` | `{ items: Book[], total, fuzzy, mode }` |
 | `GET /search/suggest?q=` | `[{ id, title, titleRu, author, authorRu, year, cover }]` |
@@ -93,6 +94,16 @@ npm run load:embeddings -- [путь к parquet] [--model имя] [--work-mem 90
 - **Книги для малышей** (картонные или по возрасту читателя из карточки Amazon — до 8 лет, либо «от N лет» при N ≤ 3; `reading_age_min` / `reading_age_max` загружает `load:books` из `books_meta.parquet`) в ленте, «Потому что…» и онбординге — только если пользователь сам выбрал раздел Children's Books или ему понравилась такая книга. В самом разделе и в «Похожих» на странице книги — как есть.
 - **Онбординг**: темы необязательны. Раунд 1 — до 4 узнаваемых книг (сначала с 200+ оценками, добор — с 50+), ближайших к описанию своими словами (через ML-сервис) по всему каталогу и внутри выбранных тем (темам — небольшое предпочтение), и похожие на любимые книги, добавленные поиском (`source: 'search'`); остальное — разведка по подразделам: выбранных тем, без них — разделов понравившихся книг или книг по описанию, без всего — 8 крупнейших разделов. Раунды 2+ — половина похожих на понравившиеся.
 - **Другие книги серии** (`series`, первым рядом): понравились 2+ книги одного автора с общим началом названия («Harry Potter and the …») или серией в скобках («(Jack Reacher, Book 1)») — остальные книги серии: того же автора с названием серии; других авторов — если название начинается с серии и книга из того же раздела. Одно издание на книгу (то же русское название — тоже одна книга), без подарочных наборов, 20+ оценок, по году первого издания и номеру; эти книги не повторяются в других рядах. `name` — по-русски для читающих по-русски, если есть.
+
+## Сводка отзывов
+
+Решения.md 2.6.1, 3.6, 4.13. Сводку считает ML (`data/processed/review_summary_site.parquet`, строка на пункт сводки), `load:review-summary` перезаписывает таблицы `review_summaries` / `review_summary_items` целиком в одной транзакции (книги вне каталога пропускаются и считаются; чужие `kind` / `verdict` — ошибка, прежние сводки остаются).
+
+`reviewSummary` в `GET /books/:id` — `{ analyzed, overall: { verdict, sharePos, mentions, quotePos, quoteNeg } | null, aspects: [{ aspect, label, verdict, sharePos, mentions, quotePos, quoteNeg }], info: [{ aspect, label, mentions, quotePos }] }` или `null`: пункты по `rank`, `verdict` — `praise` | `mixed` | `criticize`, `sharePos` — доля положительных (0–1), цитаты — английские, могут быть `null`; `info` — справка без вердикта («Кому подойдёт»). Своей сводки нет — берётся у другого издания (тот же автор и `editionKey`, плюс тот же вид книги, номер тома и не расходящиеся подзаголовки — `sameWork`, решения.md 4.13); у своих книг (ru / kz) — всегда `null`.
+
+```powershell
+npm run load:review-summary -- [путь к parquet]   # по умолчанию data/processed/review_summary_site.parquet
+```
 
 ## Книги на языке читателя
 

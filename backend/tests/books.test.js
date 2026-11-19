@@ -8,8 +8,8 @@ const BOOK_KEYS = ['annotation', 'author', 'authorRu', 'cover', 'id', 'originalL
 describe('каталог и поиск', () => {
   it('книга в форме слоя данных фронтенда; нет книги — 404', async () => {
     const res = await request(app).get(`/api/books/${BOOKS[0].id}`).expect(200)
-    expect(Object.keys(res.body).sort()).toEqual([...BOOK_KEYS, 'annotationRu', 'annotationSource', 'annotationUrl', 'my', 'recommendation'].sort())
-    expect(res.body).toMatchObject({ recommendation: null, my: null })
+    expect(Object.keys(res.body).sort()).toEqual([...BOOK_KEYS, 'annotationRu', 'annotationSource', 'annotationUrl', 'my', 'recommendation', 'reviewSummary'].sort())
+    expect(res.body).toMatchObject({ recommendation: null, my: null, reviewSummary: null })
     await request(app).get('/api/books/NOPE').expect(404)
   })
 

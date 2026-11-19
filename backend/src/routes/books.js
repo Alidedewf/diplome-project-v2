@@ -7,6 +7,7 @@ import { config } from '../config.js'
 import { bookColumns, oneEdition, toBook } from '../lib/books.js'
 import { byTaste } from '../lib/embeddings.js'
 import { bookNotFound, pageSchema, parse } from '../lib/http.js'
+import { reviewSummaryFor } from '../lib/review-summary.js'
 import { getSimilar, loadProfile, reasonFor } from '../services/recommender.js'
 
 export const router = Router()
@@ -69,24 +70,27 @@ router.get('/books', optionalAuth, async (req, res) => {
   res.json({ items, total })
 })
 
-// Book & { recommendation: Reason | null, my: { rating, shelf, hidden } | null }
+// Book & { reviewSummary: ReviewSummary | null (src/lib/review-summary.js), recommendation: Reason | null,
+//   my: { rating, shelf, hidden } | null }
 router.get('/books/:id', optionalAuth, async (req, res) => {
   const [row] = await prisma.$queryRaw`SELECT ${bookColumns('b', { full: true })} FROM books b WHERE b.id = ${req.params.id}`
   if (!row) throw bookNotFound(req.params.id)
   const book = toBook(row, { full: true })
-  if (!req.user) return res.json({ ...book, recommendation: null, my: null })
+  if (!req.user) return res.json({ ...book, reviewSummary: await reviewSummaryFor(book), recommendation: null, my: null })
 
   const key = { userId_bookId: { userId: req.user.id, bookId: book.id } }
-  const [rating, shelf, hidden, profile] = await Promise.all([
+  const [rating, shelf, hidden, profile, reviewSummary] = await Promise.all([
     prisma.rating.findUnique({ where: key }),
     prisma.shelf.findUnique({ where: key }),
     prisma.hiddenBook.findUnique({ where: key }),
     loadProfile(req.user.id),
+    reviewSummaryFor(book),
   ])
   // Уже оценённая книга — не рекомендация
   const recommendation = rating ? null : reasonFor(book, profile, { detailed: true })
   res.json({
     ...book,
+    reviewSummary,
     recommendation,
     my: { rating: rating?.value ?? null, shelf: shelf?.shelf ?? null, hidden: Boolean(hidden) },
   })

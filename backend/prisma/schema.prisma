@@ -78,6 +78,7 @@ model Book {
   hidden     HiddenBook[]
   events     Event[]
   embeddings BookEmbedding[]
+  reviewSummary ReviewSummary?
 
   @@index([section, ratingsCount(sort: Desc)])
   @@index([section, weightedRating(sort: Desc)])
@@ -270,4 +271,37 @@ model ItemNeighbor {
 
   @@id([bookId, rank])
   @@map("item_neighbors")
+}
+
+// Сводка отзывов на карточке книги (2.6.1, 3.6, 4.13): из data/processed/review_summary_site.parquet (ML),
+// перезаливается целиком (scripts/load-review-summary.js). analyzed — сколько отзывов проанализировано
+model ReviewSummary {
+  bookId   String @id @map("book_id") @db.VarChar(16)
+  analyzed Int
+
+  book  Book                @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  items ReviewSummaryItem[]
+
+  @@map("review_summaries")
+}
+
+// Пункт сводки в порядке показа (rank). kind: overall («в целом») | aspect | info (справка «Кому подойдёт», без вердикта);
+// verdict: praise | mixed | criticize (у info — null; CHECK — в миграции). Цитаты — английские, из отзывов, могут быть null
+model ReviewSummaryItem {
+  bookId       String  @map("book_id") @db.VarChar(16)
+  rank         Int     @db.SmallInt
+  kind         String  @db.VarChar(8)
+  aspect       String  @db.VarChar(32)
+  labelRu      String  @map("label_ru")
+  verdict      String? @db.VarChar(10)
+  sharePos     Float?  @map("share_pos") @db.Real
+  mentions     Int
+  mentionShare Float?  @map("mention_share") @db.Real
+  quotePos     String? @map("quote_pos")
+  quoteNeg     String? @map("quote_neg")
+
+  summary ReviewSummary @relation(fields: [bookId], references: [bookId], onDelete: Cascade)
+
+  @@id([bookId, rank])
+  @@map("review_summary_items")
 }

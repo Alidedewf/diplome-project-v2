@@ -14,6 +14,7 @@
     "load:annotations-ru": "node scripts/load-annotations-ru.js",
     "load:own-books": "node scripts/load-own-books.js",
     "load:item-neighbors": "node scripts/load-item-neighbors.js",
+    "load:review-summary": "node scripts/load-review-summary.js",
     "test": "vitest run"
   },
   "dependencies": {
