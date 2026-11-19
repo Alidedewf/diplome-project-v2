@@ -106,6 +106,85 @@ const ANNOTATIONS_RU = {
   },
 }
 
+// Сводка отзывов (2.6.1, 5.11) — поле reviewSummary в getBook, формат как у бэкенда. Три случая: Dune — все три
+// группы, Sapiens — только «хвалят», Gone Girl — без сводки (null, как у книг, где отзывов мало). Цитаты придуманы
+// для моков, на сервере — настоящие предложения из отзывов
+const REVIEW_SUMMARIES = {
+  '0441172717': {
+    analyzed: 20,
+    overall: {
+      verdict: 'praise', sharePos: 0.85, mentions: 15,
+      quotePos: 'One of the greatest science fiction novels ever written, and it still holds up.',
+      quoteNeg: 'I wanted to love it, but most of the book felt dry and distant.',
+    },
+    aspects: [
+      {
+        aspect: 'world', label: 'Мир и атмосфера', verdict: 'praise', sharePos: 0.92, mentions: 12,
+        quotePos: 'Herbert builds an entire universe — ecology, religion, politics — and every piece of it feels real.',
+        quoteNeg: null,
+      },
+      {
+        aspect: 'characters', label: 'Персонажи', verdict: 'praise', sharePos: 0.79, mentions: 7,
+        quotePos: "Watching Paul grow into his role is fascinating, and Lady Jessica is one of my favorite characters.",
+        quoteNeg: 'Hard to connect with anyone when everyone talks like a prophet.',
+      },
+      {
+        aspect: 'plot', label: 'Сюжет', verdict: 'praise', sharePos: 0.83, mentions: 6,
+        quotePos: 'The political intrigue between the Houses kept me guessing until the very end.',
+        quoteNeg: null,
+      },
+      {
+        aspect: 'style', label: 'Стиль', verdict: 'mixed', sharePos: 0.5, mentions: 8,
+        quotePos: 'The prose is dense but beautiful, almost biblical in places.',
+        quoteNeg: 'The constant inner monologues in italics drove me crazy after a while.',
+      },
+      {
+        aspect: 'pace', label: 'Темп', verdict: 'criticize', sharePos: 0.25, mentions: 6,
+        quotePos: 'Once the story gets going, it is very hard to put down.',
+        quoteNeg: 'The first hundred pages are a slog: tons of new terms and very little happens.',
+      },
+    ],
+    info: [
+      {
+        aspect: 'audience', label: 'Кому подойдёт', mentions: 4,
+        quotePos: 'A must for any sci-fi fan, but newcomers should be ready for a slow, demanding start.',
+      },
+    ],
+  },
+  '0062316095': {
+    analyzed: 20,
+    overall: {
+      verdict: 'praise', sharePos: 0.9, mentions: 14,
+      quotePos: 'This book changed the way I look at the history of our species.',
+      quoteNeg: null,
+    },
+    aspects: [
+      {
+        aspect: 'clarity', label: 'Подача', verdict: 'praise', sharePos: 0.88, mentions: 11,
+        quotePos: 'Harari explains huge ideas in plain language without ever talking down to the reader.',
+        quoteNeg: 'Some chapters repeat the same point a few times too many.',
+      },
+      {
+        aspect: 'engagement', label: 'Увлекательность', verdict: 'praise', sharePos: 0.9, mentions: 10,
+        quotePos: 'I could not put it down — it reads more like a novel than a history book.',
+        quoteNeg: null,
+      },
+      {
+        aspect: 'depth', label: 'Глубина', verdict: 'praise', sharePos: 0.75, mentions: 6,
+        quotePos: 'Covers seventy thousand years and still finds room for surprising details.',
+        quoteNeg: 'Broad rather than deep; specialists will find it superficial.',
+      },
+    ],
+    info: [
+      {
+        aspect: 'audience', label: 'Кому подойдёт', mentions: 5,
+        quotePos: 'Perfect for anyone curious about history, even if you have never read a book on the subject.',
+      },
+    ],
+  },
+  B006LSZECO: null,
+}
+
 // Серии (2.8, п. 3): в выборке нет поля серии — узнаём несколько известных по названию
 const SERIES = [
   { re: /Harry Potter/, name: 'Гарри Поттер', nameEn: 'Harry Potter' },
@@ -326,7 +405,8 @@ export async function getBook(id) {
   const book = byId.get(id)
   if (!book) return fail(404, 'book_not_found', `Книга ${id} не найдена`)
   // у своих книг описание уже в данных (LOCAL_BOOKS), у книг Amazon — из ANNOTATIONS_RU, если есть
-  const full = book.source === 'amazon' ? { ...book, annotationRu: null, annotationSource: null, annotationUrl: null, ...ANNOTATIONS_RU[id] } : book
+  const base = book.source === 'amazon' ? { ...book, annotationRu: null, annotationSource: null, annotationUrl: null, ...ANNOTATIONS_RU[id] } : book
+  const full = { ...base, reviewSummary: REVIEW_SUMMARIES[id] ?? null }
   const account = currentAccount()
   if (!account) return delay({ ...full, recommendation: null, my: null })
   const m = account.my[id] ?? {}

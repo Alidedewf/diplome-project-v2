@@ -22,6 +22,9 @@
   --smart-text: #8a5a12;
   --smart-soft: #f6ecda;
 
+  /* критика в сводке отзывов (5.11) — приглушённый кирпичный, не «ошибка» */
+  --critic: #9a4a3a;
+
   --star: #b7791f;
   --cover-shadow: 0 1px 2px rgb(28 27 25 / 0.12), 0 4px 12px rgb(28 27 25 / 0.08);
 }
@@ -45,6 +48,8 @@
   --smart-text: #e8b565;
   --smart-soft: #2a2217;
 
+  --critic: #d98b78;
+
   --star: #d69a3f;
   --cover-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px rgb(0 0 0 / 0.35);
 }
@@ -64,6 +69,7 @@
   --color-smart: var(--smart);
   --color-smart-text: var(--smart-text);
   --color-smart-soft: var(--smart-soft);
+  --color-critic: var(--critic);
   --color-star: var(--star);
   --shadow-cover: var(--cover-shadow);
 }

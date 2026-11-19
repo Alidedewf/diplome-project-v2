@@ -12,6 +12,8 @@
 //   getSections()          → [{ name, booksCount }]
 //   getBooks(p)            → { items: Book[], total }   p: { section?, source?: 'ru' | 'kz', sort?: 'popular' | 'rating', limit?, offset? }
 //   getBook(id)            → Book & { annotationRu, annotationSource: 'wikipedia' | 'mt' | null, annotationUrl, recommendation: Reason | null, my: { rating, shelf, hidden } | null }
+//                            + reviewSummary: { analyzed, overall: { verdict, sharePos, mentions, quotePos, quoteNeg } | null, aspects: [{ aspect, label, verdict, sharePos, mentions, quotePos, quoteNeg }],
+//                              info: [{ aspect, label, mentions, quotePos }] } | null   verdict: praise | mixed | criticize (components/ReviewSummary.jsx)
 //   getSimilarBooks(id, p) → Book[]
 //   getRecommendations(p)  → { forYou: [{ book, reason }], becauseYouLiked: [{ seed: Book, items: [{ book, reason }] }],
 //                              series: [{ name, seeds: Book[], items: [{ book, reason }] }], local: [{ source: 'ru' | 'kz', items: [{ book, reason }] }] }

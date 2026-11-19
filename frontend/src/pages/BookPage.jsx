@@ -10,6 +10,7 @@ import { Button } from '../components/Button.jsx'
 import { Chip } from '../components/Chip.jsx'
 import { OriginChip } from '../components/OriginChip.jsx'
 import { RatingStars } from '../components/RatingStars.jsx'
+import { ReviewSummary } from '../components/ReviewSummary.jsx'
 import { WhyRecommended } from '../components/WhyRecommended.jsx'
 import { useToast } from '../components/toast-context.js'
 import { formatCount, RATINGS } from '../lib/format.js'
@@ -272,6 +273,9 @@ export function BookPage() {
           </div>
         </div>
       </article>
+
+      {/* «Что говорят читатели» (2.6): сводка — над списком отзывов; списка на фронтенде пока нет */}
+      <ReviewSummary key={`reviews-${book.id}`} summary={book.reviewSummary} className="max-w-2xl" />
 
       <BookShelf
         title="Похожие книги"
